@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 
 BAR_WIDTH = 0.2
+GROUP_WIDTH = 1
 
 
 @dataclass(frozen=True, eq=True)
@@ -56,7 +57,7 @@ def plot_benchmarks(benchmarks: npt.NDArray[Benchmark]):
             assert all(np.unique(nflops[irow, icol, ibench, :]).size == 1
                        for ibench in range(benchmarks_in_group))
             for ibar in range(bars_per_group):
-                ax.bar(np.arange(benchmarks_in_group),
+                ax.bar(GROUP_WIDTH*np.arange(benchmarks_in_group) + ibar*BAR_WIDTH,
                        flop_rate[irow, icol, :, ibar],
                        width=BAR_WIDTH,
                        edgecolor="black"
