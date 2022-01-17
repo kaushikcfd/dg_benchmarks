@@ -116,6 +116,14 @@ class WaveBenchmark(Benchmark):
 
         rhs = self.actx.compile(rhs)
 
+        # {{{ warmup
+
+        for _ in range(self.warmup_rounds):
+            fields = thaw(freeze(fields, self.actx), self.actx)
+            fields = rhs(t, fields)
+
+        # }}}
+
         n_sim_rounds = 0
         total_sim_time = 0.
 
