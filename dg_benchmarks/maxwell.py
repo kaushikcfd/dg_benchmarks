@@ -1,4 +1,4 @@
-from dg_benchmarks import Benchmark, GrudgeBenchmarkMixin
+from dg_benchmarks import GrudgeBenchmark
 from dataclasses import dataclass
 from arraycontext import ArrayContext, thaw
 from grudge import DiscretizationCollection
@@ -67,14 +67,14 @@ def setup_em_solver(*,
 
 
 @dataclass(frozen=True, eq=True)
-class MaxwellBenchmark(Benchmark, GrudgeBenchmarkMixin):
+class MaxwellBenchmark(GrudgeBenchmark):
     actx: ArrayContext
     dim: int
     order: int
 
     @cached_property
-    def _setup_solver(self):
-        return setup_em_solver()
+    def _setup_solver_properties(self):
+        return setup_em_solver(actx=self.actx, dim=self.dim, order=self.order)
 
 
 @dataclass(frozen=True, eq=True, init=False)
@@ -83,13 +83,13 @@ class MaxwellRooflineBenchmark(MaxwellBenchmark):
         cq = kwargs.pop("queue")
         allocator = kwargs.pop("allocator")
         assert "actx" not in kwargs
-        kwargs["actx"] = FusionContractorArrayContext(cq, allocator),
+        kwargs["actx"] = FusionContractorArrayContext(cq, allocator)
         super().__init__(**kwargs)
 
     def get_runtime(self) -> float:
         from dg_benchmarks.device_data import (DEV_TO_PEAK_BW,
                                                DEV_TO_PEAK_F64_GFLOPS)
-        dev, = self.actx.queue.devices
+        dev = self.actx.queue.device
         return max((self.get_nflops()*1e-9)/DEV_TO_PEAK_F64_GFLOPS[dev.name],
                    (self.get_nbytes()*1e-9)/DEV_TO_PEAK_BW[dev.name]
                    )

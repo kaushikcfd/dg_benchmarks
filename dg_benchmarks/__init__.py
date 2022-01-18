@@ -20,9 +20,17 @@ GROUP_WIDTH = 1
 
 @dataclass(frozen=True, eq=True)
 class Benchmark(abc.ABC):
-    warmup_rounds: int = 5
-    min_timings_rounds: int = 20
-    min_timings_secs: float = 0.2
+    @property
+    def warmup_rounds(self) -> int:
+        return 5
+
+    @property
+    def min_timing_rounds(self) -> int:
+        return 20
+
+    @property
+    def min_timing_secs(self) -> float:
+        return 0.2
 
     @abc.abstractmethod
     def get_runtime(self) -> float:
@@ -36,13 +44,14 @@ class Benchmark(abc.ABC):
     def get_nbytes(self) -> int:
         pass
 
-
-@lp.memoize_on_disk
-def get_loopy_op_map(t_unit):
+# @lp.memoize_on_disk
+def get_loopy_op_map(t_unit):  # noqa: E302
+    # TODO: Re-enable memoize_on_disk for this routine.
+    # Currently runs into: cannot pickle 'islpy._isl.Space' object
     return lp.get_op_map(t_unit, subgroup_size=32)
 
 
-class GrudgeBenchmarkMixin:
+class GrudgeBenchmark(Benchmark):
     @cached_property
     def _rhs_as_loopy_knl_for_stats(self):
         if isinstance(self.actx, FusionContractorArrayContext):
@@ -51,22 +60,24 @@ class GrudgeBenchmarkMixin:
             actx = FusionContractorArrayContext(self.actx.queue,
                                                 self.actx.allocator)
 
-        rhs, fields, dt = self._setup_solver()
+        rhs, fields, dt = self._setup_solver_properties
 
         from arraycontext.impl.pytato.compile import (
             _get_arg_id_to_arg_and_arg_id_to_descr)
-        return (actx
-               .compile(rhs)
-               .program_cache[_get_arg_id_to_arg_and_arg_id_to_descr((0,
-                                                                      fields),
-                                                                     {})[1]]
-               .pytato_program
-               .program
-               .default_entrypoint)
+
+        compiled_rhs = actx.compile(rhs)
+        compiled_rhs(0.0, fields)
+
+        return (compiled_rhs
+                .program_cache[_get_arg_id_to_arg_and_arg_id_to_descr((0.0,
+                                                                       fields),
+                                                                      {})[1]]
+                .pytato_program
+                .program)
 
     def get_runtime(self) -> float:
-        t = 0
-        rhs, fields, dt = self._setup_solver()
+        t = 0.0
+        rhs, fields, dt = self._setup_solver_properties
 
         rhs = self.actx.compile(rhs)
 
@@ -75,14 +86,15 @@ class GrudgeBenchmarkMixin:
         for _ in range(self.warmup_rounds):
             fields = thaw(freeze(fields, self.actx), self.actx)
             fields = rhs(t, fields)
+            t += dt
 
         # }}}
 
         n_sim_rounds = 0
         total_sim_time = 0.
 
-        while ((n_sim_rounds < self.min_timings_rounds)
-               or (total_sim_time < self.min_timings_secs)):
+        while ((n_sim_rounds < self.min_timing_rounds)
+               or (total_sim_time < self.min_timing_secs)):
             # {{{ Run 100 rounds
 
             self.actx.queue.finish()
@@ -97,7 +109,7 @@ class GrudgeBenchmarkMixin:
             # }}}
 
             n_sim_rounds += 100
-            total_sim_time += (t_start - t_end)
+            total_sim_time += (t_end - t_start)
 
         return total_sim_time / n_sim_rounds
 
@@ -150,8 +162,8 @@ def plot_benchmarks(benchmarks: npt.NDArray[Benchmark]):
 
     nrows, ncols, benchmarks_in_group, bars_per_group = benchmarks.shape
 
-    timings = np.vectorize(lambda x: x.get_runtime())(benchmarks)
-    nflops = np.vectorize(lambda x: x.get_nflops())(benchmarks)
+    timings = np.vectorize(lambda x: x.get_runtime(), [np.float64])(benchmarks)
+    nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(benchmarks)
     flop_rate = (nflops / timings) * 1e-9
 
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False)
