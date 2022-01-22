@@ -183,10 +183,66 @@ class RooflineBenchmarkMixin:
         return "Roofline"
 
 
-def plot_benchmarks(benchmarks: npt.NDArray[Benchmark],
-                    ):
+def _plot_or_record(timings: npt.NDArray[np.float64],
+                    nflops: npt.NDArray[np.int64],
+                    xticks: npt.NDArray[str],
+                    labels: npt.NDArray[str],
+                    *,
+                    plot,
+                    record):
+
+    nrows, ncols, benchmarks_in_group, bars_per_group = timings.shape
+
+    if record:
+        from datetime import datetime
+        import pytz
+
+        filename = (datetime
+                    .now(pytz.timezone("America/Chicago"))
+                    .strftime("archive/case_%Y_%m_%d_%H%M.npz"))
+        np.savez_compressed(filename,
+                            timings=timings,
+                            nflops=nflops,
+                            xticks=xticks,
+                            labels=labels)
+
+    if plot:
+        flop_rate = (nflops / timings) * 1e-9
+
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False)
+
+        for irow, row in enumerate(axs):
+            for icol, ax in enumerate(row):
+                assert all(np.unique(nflops[irow, icol, ibench, :]).size == 1
+                        for ibench in range(benchmarks_in_group))
+                assert all(np.unique(xticks[irow, icol, ibench, :]).size == 1
+                        for ibench in range(benchmarks_in_group))
+                for ibar in range(bars_per_group):
+                    label, = np.unique(labels[irow, icol, :, ibar])
+                    ax.bar(
+                        GROUP_WIDTH*np.arange(benchmarks_in_group) + ibar*BAR_WIDTH,
+                        flop_rate[irow, icol, :, ibar],
+                        width=BAR_WIDTH,
+                        edgecolor="black",
+                        label=label,
+                        )
+
+                ax.xaxis.set_major_locator(ticker.FixedLocator(
+                    GROUP_WIDTH*np.arange(benchmarks_in_group)
+                    + benchmarks_in_group*0.5*BAR_WIDTH))
+                ax.xaxis.set_major_formatter(
+                    ticker.FixedFormatter(xticks[irow, icol, :, 0]))
+
+        axs[-1, 0].legend(bbox_to_anchor=(1.1, -0.5),
+                        loc="lower center",
+                        ncol=bars_per_group)
+
+        return fig
+
+
+def plot_benchmarks(benchmarks: npt.NDArray[Benchmark], save=True):
     """
-    :param benchmarks: A 3-dimensional array of benchmarks where that can be
+    :param benchmarks: A 4-dimensional array of benchmarks where that can be
         indexed by group index by the first 2 indices and the 3rd index is
         responsible for different instances of a single group.
 
@@ -199,38 +255,44 @@ def plot_benchmarks(benchmarks: npt.NDArray[Benchmark],
     if benchmarks.ndim != 4:
         raise RuntimeError("benchmarks must be a 4-dimension np.array")
 
-    nrows, ncols, benchmarks_in_group, bars_per_group = benchmarks.shape
+    timings = np.vectorize(lambda x: x.get_runtime(), [np.float64])(benchmarks)
+    nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(benchmarks)
+    xticks = np.vectorize(lambda x: x.xtick, [str])(benchmarks)
+    labels = np.vectorize(lambda x: x.label, [str])(benchmarks)
+
+    return _plot_or_record(timings, nflops, xticks, labels,
+                           plot=True, record=save)
+
+
+def record_to_file(benchmarks: npt.NDArray[Benchmark]):
+    """
+    :param benchmarks: A 4-dimensional array of benchmarks where that can be
+        indexed by group index by the first 2 indices and the 3rd index is
+        responsible for different instances of a single group.
+
+    .. Example::
+
+       Something like a Maxwell's Equations DG solver would comprise a group,
+       and, something like a DG solver of using polynomials of degree
+       :math:`p=2` would comprise an instance of the group.
+    """
+    if benchmarks.ndim != 4:
+        raise RuntimeError("benchmarks must be a 4-dimension np.array")
 
     timings = np.vectorize(lambda x: x.get_runtime(), [np.float64])(benchmarks)
     nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(benchmarks)
     xticks = np.vectorize(lambda x: x.xtick, [str])(benchmarks)
     labels = np.vectorize(lambda x: x.label, [str])(benchmarks)
-    flop_rate = (nflops / timings) * 1e-9
 
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False)
+    _plot_or_record(timings, nflops, xticks, labels,
+                    plot=False, record=True)
 
-    for irow, row in enumerate(axs):
-        for icol, ax in enumerate(row):
-            assert all(np.unique(nflops[irow, icol, ibench, :]).size == 1
-                       for ibench in range(benchmarks_in_group))
-            assert all(np.unique(xticks[irow, icol, ibench, :]).size == 1
-                       for ibench in range(benchmarks_in_group))
-            for ibar in range(bars_per_group):
-                label, = np.unique(labels[irow, icol, :, ibar])
-                ax.bar(GROUP_WIDTH*np.arange(benchmarks_in_group) + ibar*BAR_WIDTH,
-                       flop_rate[irow, icol, :, ibar],
-                       width=BAR_WIDTH,
-                       edgecolor="black",
-                       label=label,
-                       )
 
-            ax.xaxis.set_major_locator(ticker.FixedLocator(
-                GROUP_WIDTH*np.arange(benchmarks_in_group)
-                + benchmarks_in_group*0.5*BAR_WIDTH))
-            ax.xaxis.set_major_formatter(
-                ticker.FixedFormatter(xticks[irow, icol, :, 0]))
-
-    axs[-1, 0].legend(bbox_to_anchor=(1.1, -0.5),
-                      loc="lower center",
-                      ncol=bars_per_group)
-    return fig
+def plot_saved_case(file):
+    """
+    :param file: A *file* as demanded as :func:`numpy.load`.
+    """
+    data = np.load(file, allow_pickle=False)
+    return _plot_or_record(data["timings"], data["nflops"],
+                           data["xticks"], data["labels"],
+                           plot=True, record=False)
