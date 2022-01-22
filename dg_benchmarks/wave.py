@@ -1,4 +1,4 @@
-from dg_benchmarks import GrudgeBenchmark
+from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
 from arraycontext import ArrayContext, thaw
 from grudge import DiscretizationCollection
@@ -82,23 +82,13 @@ class WaveBenchmark(GrudgeBenchmark):
     def _setup_solver_properties(self):
         return setup_wave_solver(actx=self.actx, dim=self.dim, order=self.order)
 
+    @property
+    def xtick(self) -> str:
+        return f"wave.{self.dim}D.P{self.order}"
 
-@dataclass(frozen=True, eq=True, init=False, repr=True)
-class WaveRooflineBenchmark(WaveBenchmark):
-    def __init__(self, **kwargs):
-        cq = kwargs.pop("queue")
-        allocator = kwargs.pop("allocator")
-        assert "actx" not in kwargs
-        kwargs["actx"] = FusionContractorArrayContext(cq, allocator)
-        super().__init__(**kwargs)
 
-    def get_runtime(self) -> float:
-        from dg_benchmarks.device_data import (DEV_TO_PEAK_BW,
-                                               DEV_TO_PEAK_F64_GFLOPS)
-        dev = self.actx.queue.device
-        return max((self.get_nflops()*1e-9)/DEV_TO_PEAK_F64_GFLOPS[dev.name],
-                   (self.get_nbytes()*1e-9)/DEV_TO_PEAK_BW[dev.name]
-                   )
+class WaveRooflineBenchmark(RooflineBenchmarkMixin, WaveBenchmark):
+    pass
 
 
 def get_wave_benchmarks(cq, allocator):

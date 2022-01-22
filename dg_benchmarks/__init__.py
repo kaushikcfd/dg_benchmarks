@@ -2,6 +2,9 @@ import abc
 import time
 import numpy.typing as npt
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+# from matplotlib import rc
+# rc("text", usetex=True)
 import numpy as np
 import loopy as lp
 
@@ -16,6 +19,7 @@ from meshmode.array_context import FusionContractorArrayContext
 
 BAR_WIDTH = 0.2
 GROUP_WIDTH = 1
+plt.style.use("seaborn")
 
 
 @dataclass(frozen=True, eq=True)
@@ -31,6 +35,14 @@ class Benchmark(abc.ABC):
     @property
     def min_timing_secs(self) -> float:
         return 0.2
+
+    @abc.abstractproperty
+    def xtick(self):
+        pass
+
+    @abc.abstractproperty
+    def label(self) -> str:
+        pass
 
     @abc.abstractmethod
     def get_runtime(self) -> float:
@@ -74,6 +86,10 @@ class GrudgeBenchmark(Benchmark):
                                                                       {})[1]]
                 .pytato_program
                 .program)
+
+    @property
+    def label(self) -> str:
+        return type(self.actx).__name__[:-len("ArrayContext")]
 
     def get_runtime(self) -> float:
         t = 0.0
@@ -145,7 +161,30 @@ class GrudgeBenchmark(Benchmark):
         return nfootprint_bytes
 
 
-def plot_benchmarks(benchmarks: npt.NDArray[Benchmark]):
+@dataclass(frozen=True, eq=True, init=False, repr=True)
+class RooflineBenchmarkMixin:
+    def __init__(self, **kwargs):
+        cq = kwargs.pop("queue")
+        allocator = kwargs.pop("allocator")
+        assert "actx" not in kwargs
+        kwargs["actx"] = FusionContractorArrayContext(cq, allocator)
+        super().__init__(**kwargs)
+
+    def get_runtime(self) -> float:
+        from dg_benchmarks.device_data import (DEV_TO_PEAK_BW,
+                                               DEV_TO_PEAK_F64_GFLOPS)
+        dev = self.actx.queue.device
+        return max((self.get_nflops()*1e-9)/DEV_TO_PEAK_F64_GFLOPS[dev.name],
+                   (self.get_nbytes()*1e-9)/DEV_TO_PEAK_BW[dev.name]
+                   )
+
+    @property
+    def label(self) -> str:
+        return "Roofline"
+
+
+def plot_benchmarks(benchmarks: npt.NDArray[Benchmark],
+                    ):
     """
     :param benchmarks: A 3-dimensional array of benchmarks where that can be
         indexed by group index by the first 2 indices and the 3rd index is
@@ -164,6 +203,8 @@ def plot_benchmarks(benchmarks: npt.NDArray[Benchmark]):
 
     timings = np.vectorize(lambda x: x.get_runtime(), [np.float64])(benchmarks)
     nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(benchmarks)
+    xticks = np.vectorize(lambda x: x.xtick, [str])(benchmarks)
+    labels = np.vectorize(lambda x: x.label, [str])(benchmarks)
     flop_rate = (nflops / timings) * 1e-9
 
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False)
@@ -172,13 +213,24 @@ def plot_benchmarks(benchmarks: npt.NDArray[Benchmark]):
         for icol, ax in enumerate(row):
             assert all(np.unique(nflops[irow, icol, ibench, :]).size == 1
                        for ibench in range(benchmarks_in_group))
+            assert all(np.unique(xticks[irow, icol, ibench, :]).size == 1
+                       for ibench in range(benchmarks_in_group))
             for ibar in range(bars_per_group):
+                label, = np.unique(labels[irow, icol, :, ibar])
                 ax.bar(GROUP_WIDTH*np.arange(benchmarks_in_group) + ibar*BAR_WIDTH,
                        flop_rate[irow, icol, :, ibar],
                        width=BAR_WIDTH,
-                       edgecolor="black"
-                       # TODO
-                       # label="..."
+                       edgecolor="black",
+                       label=label,
                        )
 
+            ax.xaxis.set_major_locator(ticker.FixedLocator(
+                GROUP_WIDTH*np.arange(benchmarks_in_group)
+                + benchmarks_in_group*0.5*BAR_WIDTH))
+            ax.xaxis.set_major_formatter(
+                ticker.FixedFormatter(xticks[irow, icol, :, 0]))
+
+    axs[-1, 0].legend(bbox_to_anchor=(1.1, -0.5),
+                      loc="lower center",
+                      ncol=bars_per_group)
     return fig
