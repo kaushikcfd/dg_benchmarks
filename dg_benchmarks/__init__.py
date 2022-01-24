@@ -7,19 +7,22 @@ import matplotlib.ticker as ticker
 # rc("text", usetex=True)
 import numpy as np
 import loopy as lp
-
+import logging
 
 from dataclasses import dataclass
-from functools import cached_property
+from typing import Type, TYPE_CHECKING
+from functools import cached_property, cache
 
-from arraycontext import thaw, freeze
+from arraycontext import thaw, freeze, ArrayContext
 
-from meshmode.array_context import FusionContractorArrayContext
-
-
+plt.style.use("seaborn")
+logger = logging.getLogger(__name__)
 BAR_WIDTH = 0.2
 GROUP_WIDTH = 1
-plt.style.use("seaborn")
+
+
+if TYPE_CHECKING:
+    import pyopencl as cl
 
 
 @dataclass(frozen=True, eq=True)
@@ -56,51 +59,57 @@ class Benchmark(abc.ABC):
     def get_nbytes(self) -> int:
         pass
 
+    @abc.abstractproperty
+    def eval_order(self) -> int:
+        """
+        Returns the order in which the benchmark is supposed to be run in a
+        benchmark suite. Benchmarks with lower value will get run earlier.
+        """
+        pass
+
 # @lp.memoize_on_disk
 def get_loopy_op_map(t_unit):  # noqa: E302
     # TODO: Re-enable memoize_on_disk for this routine.
     # Currently runs into: cannot pickle 'islpy._isl.Space' object
-    return lp.get_op_map(t_unit, subgroup_size=32)
+    return lp.get_op_map(t_unit, subgroup_size=1)
 
 
+@dataclass(frozen=True, eq=True)
 class GrudgeBenchmark(Benchmark):
-    @cached_property
-    def _rhs_as_loopy_knl_for_stats(self):
-        if isinstance(self.actx, FusionContractorArrayContext):
-            actx = self.actx
-        else:
-            actx = FusionContractorArrayContext(self.actx.queue,
-                                                self.actx.allocator)
-
-        rhs, fields, dt = self._setup_solver_properties
-
-        from arraycontext.impl.pytato.compile import (
-            _get_arg_id_to_arg_and_arg_id_to_descr)
-
-        compiled_rhs = actx.compile(rhs)
-        compiled_rhs(0.0, fields)
-
-        return (compiled_rhs
-                .program_cache[_get_arg_id_to_arg_and_arg_id_to_descr((0.0,
-                                                                       fields),
-                                                                      {})[1]]
-                .pytato_program
-                .program)
+    actx_class: Type[ArrayContext]
+    cl_ctx: "cl.Context"
+    dim: int
+    order: int
 
     @property
     def label(self) -> str:
-        return type(self.actx).__name__[:-len("ArrayContext")]
+        return self.actx_class.__name__[:-len("ArrayContext")]
 
     def get_runtime(self) -> float:
-        t = 0.0
-        rhs, fields, dt = self._setup_solver_properties
+        from arraycontext import (PytatoPyOpenCLArrayContext,
+                                  PyOpenCLArrayContext)
+        from arraycontext import EagerJAXArrayContext
+        if issubclass(self.actx_class, (PytatoPyOpenCLArrayContext,
+                                        PyOpenCLArrayContext)):
+            import pyopencl as cl
+            import pyopencl.tools as cl_tools
+            cq = cl.CommandQueue(self.cl_ctx)
+            allocator = cl_tools.MemoryPool(cl_tools.ImmediateAllocator(cq))
+            actx = self.actx_class(cq, allocator)
+        elif issubclass(self.actx_class, EagerJAXArrayContext):
+            actx = self.actx_class()
+        else:
+            raise NotImplementedError(self.actx_class)
 
-        rhs = self.actx.compile(rhs)
+        t = 0.0
+        rhs, fields, dt = self._setup_solver_properties(actx)
+
+        rhs = actx.compile(rhs)
 
         # {{{ warmup
 
         for _ in range(self.warmup_rounds):
-            fields = thaw(freeze(fields, self.actx), self.actx)
+            fields = thaw(freeze(fields, actx), actx)
             fields = rhs(t, fields)
             t += dt
 
@@ -113,13 +122,15 @@ class GrudgeBenchmark(Benchmark):
                or (total_sim_time < self.min_timing_secs)):
             # {{{ Run 100 rounds
 
-            self.actx.queue.finish()
+            fields = thaw(freeze(fields, actx), actx)
             t_start = time.time()
+
             for _ in range(100):
-                fields = thaw(freeze(fields, self.actx), self.actx)
+                fields = thaw(freeze(fields, actx), actx)
                 fields = rhs(t, fields)
                 t += dt
-            self.actx.queue.finish()
+
+            fields = thaw(freeze(fields, actx), actx)
             t_end = time.time()
 
             # }}}
@@ -129,6 +140,69 @@ class GrudgeBenchmark(Benchmark):
 
         return total_sim_time / n_sim_rounds
 
+    @property
+    def eval_order(self) -> int:
+        """
+        Returns the order in which the benchmark is supposed to be run in a
+        benchmark suite. Benchmarks with lower value will get run earlier.
+        """
+        from meshmode.array_context import (PyOpenCLArrayContext,
+                                            FusionContractorArrayContext)
+        from arraycontext import PytatoJAXArrayContext
+
+        if issubclass(self.actx_class, PyOpenCLArrayContext):
+            return 1
+        elif issubclass(self.actx_class, FusionContractorArrayContext):
+            return 2
+        elif issubclass(self.actx_class, PytatoJAXArrayContext):
+            return 100
+        else:
+            raise NotImplementedError(self.actx_class)
+
+    def get_nflops(self) -> int:
+        raise NotImplementedError
+
+    def get_nbytes(self) -> int:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, eq=True)
+class RooflineBenchmarkMixin:
+    cl_ctx: "cl.Context"
+    dim: int
+    order: int
+
+    @cached_property
+    def _rhs_as_loopy_knl_for_stats(self):
+        import pyopencl as cl
+        import pyopencl.tools as cl_tools
+        from meshmode.array_context import FusionContractorArrayContext
+        cq = cl.CommandQueue(self.cl_ctx)
+        allocator = cl_tools.MemoryPool(cl_tools.ImmediateAllocator(cq))
+        actx = FusionContractorArrayContext(cq, allocator)
+
+        rhs, fields, dt = self._setup_solver_properties(actx)
+
+        from arraycontext.impl.pytato.compile import (
+            _get_arg_id_to_arg_and_arg_id_to_descr)
+
+        compiled_rhs = actx.compile(rhs)
+        compiled_rhs(0.0, fields)
+
+        return (compiled_rhs
+                .program_cache[_get_arg_id_to_arg_and_arg_id_to_descr((0.0,
+                                                                       fields),
+                                                                      {})[1]]
+                .pytato_program
+                .with_transformed_program(lambda x: x.with_kernel(
+                    x.default_entrypoint
+                    .copy(
+                        silenced_warnings=(x.default_entrypoint.silenced_warnings
+                                           + ["insn_count_subgroups_upper_bound",
+                                              "summing_if_branches_ops"]))))
+                .program)
+
+    @cache
     def get_nflops(self) -> int:
         t_unit = self._rhs_as_loopy_knl_for_stats
         op_map = get_loopy_op_map(t_unit)
@@ -136,8 +210,10 @@ class GrudgeBenchmark(Benchmark):
         f64_ops = op_map.filter_by(dtype=[np.float64],
                                    kernel_name="_pt_kernel").eval_and_sum({})
 
+        logger.critical(f"DONE: computing nflops for {self}.")
         return f64_ops
 
+    @cache
     def get_nbytes(self) -> int:
         from pytools import product
         from loopy.kernel.array import ArrayBase
@@ -150,30 +226,20 @@ class GrudgeBenchmark(Benchmark):
             if (isinstance(ary, ArrayBase)
                     and ary.address_space == lp.AddressSpace.GLOBAL):
                 nfootprint_bytes += (product(ary.shape)
-                                    * ary.dtype.itemsize)
+                                     * ary.dtype.itemsize)
 
         for ary in knl.temporary_variables.values():
             if ary.address_space == lp.AddressSpace.GLOBAL:
                 # global temps would be written once and read once
                 nfootprint_bytes += (2 * product(ary.shape)
-                                    * ary.dtype.itemsize)
+                                     * ary.dtype.itemsize)
 
         return nfootprint_bytes
-
-
-@dataclass(frozen=True, eq=True, init=False, repr=True)
-class RooflineBenchmarkMixin:
-    def __init__(self, **kwargs):
-        cq = kwargs.pop("queue")
-        allocator = kwargs.pop("allocator")
-        assert "actx" not in kwargs
-        kwargs["actx"] = FusionContractorArrayContext(cq, allocator)
-        super().__init__(**kwargs)
 
     def get_runtime(self) -> float:
         from dg_benchmarks.device_data import (DEV_TO_PEAK_BW,
                                                DEV_TO_PEAK_F64_GFLOPS)
-        dev = self.actx.queue.device
+        dev, = self.cl_ctx.devices
         return max((self.get_nflops()*1e-9)/DEV_TO_PEAK_F64_GFLOPS[dev.name],
                    (self.get_nbytes()*1e-9)/DEV_TO_PEAK_BW[dev.name]
                    )
@@ -181,6 +247,14 @@ class RooflineBenchmarkMixin:
     @property
     def label(self) -> str:
         return "Roofline"
+
+    @property
+    def eval_order(self) -> int:
+        """
+        Returns the order in which the benchmark is supposed to be run in a
+        benchmark suite. Benchmarks with lower value will get run earlier.
+        """
+        return 0
 
 
 def _plot_or_record(timings: npt.NDArray[np.float64],
@@ -205,6 +279,7 @@ def _plot_or_record(timings: npt.NDArray[np.float64],
                             nflops=nflops,
                             xticks=xticks,
                             labels=labels)
+        logger.critical(f"Data archived in '{filename}'")
 
     if plot:
         flop_rate = (nflops / timings) * 1e-9
@@ -232,6 +307,7 @@ def _plot_or_record(timings: npt.NDArray[np.float64],
                     + benchmarks_in_group*0.5*BAR_WIDTH))
                 ax.xaxis.set_major_formatter(
                     ticker.FixedFormatter(xticks[irow, icol, :, 0]))
+                ax.set_ylabel("GFLOPs/s")
 
         axs[-1, 0].legend(bbox_to_anchor=(1.1, -0.5),
                         loc="lower center",
@@ -255,10 +331,18 @@ def plot_benchmarks(benchmarks: npt.NDArray[Benchmark], save=True):
     if benchmarks.ndim != 4:
         raise RuntimeError("benchmarks must be a 4-dimension np.array")
 
-    timings = np.vectorize(lambda x: x.get_runtime(), [np.float64])(benchmarks)
-    nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(benchmarks)
+    nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(
+        benchmarks[:, :, :, -1]).reshape(benchmarks.shape[:-1] + (1,))
     xticks = np.vectorize(lambda x: x.xtick, [str])(benchmarks)
     labels = np.vectorize(lambda x: x.label, [str])(benchmarks)
+    timings = np.empty(benchmarks.shape, dtype=np.float64)
+
+    for ravel_idx in np.argsort(np.vectorize(lambda x: x.eval_order,
+                                             [np.int32])(benchmarks)
+                                .ravel()):
+        idx = np.unravel_index(ravel_idx, benchmarks.shape)
+        logger.critical(f"Starting benchmark {benchmarks[idx]}")
+        timings[idx] = benchmarks[idx].get_runtime()
 
     return _plot_or_record(timings, nflops, xticks, labels,
                            plot=True, record=save)
@@ -279,10 +363,18 @@ def record_to_file(benchmarks: npt.NDArray[Benchmark]):
     if benchmarks.ndim != 4:
         raise RuntimeError("benchmarks must be a 4-dimension np.array")
 
-    timings = np.vectorize(lambda x: x.get_runtime(), [np.float64])(benchmarks)
-    nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(benchmarks)
+    nflops = np.vectorize(lambda x: x.get_nflops(), [np.int64])(
+        benchmarks[:, :, :, -1]).reshape(benchmarks.shape[:-1] + (1,))
     xticks = np.vectorize(lambda x: x.xtick, [str])(benchmarks)
     labels = np.vectorize(lambda x: x.label, [str])(benchmarks)
+    timings = np.empty(benchmarks.shape, dtype=np.float64)
+
+    for ravel_idx in np.argsort(np.vectorize(lambda x: x.eval_order,
+                                             [np.int32])(benchmarks)
+                                .ravel()):
+        idx = np.unravel_index(ravel_idx, benchmarks.shape)
+        logger.critical(f"Starting benchmark {benchmarks[idx]}")
+        timings[idx] = benchmarks[idx].get_runtime()
 
     _plot_or_record(timings, nflops, xticks, labels,
                     plot=False, record=True)

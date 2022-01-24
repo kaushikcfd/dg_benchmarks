@@ -1,12 +1,12 @@
 from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
-from arraycontext import ArrayContext, thaw
+from arraycontext import thaw
 from grudge import DiscretizationCollection
 from pytools.obj_array import flat_obj_array
-from functools import cached_property
+from functools import cache
 from meshmode.array_context import (FusionContractorArrayContext,
-                                    PyOpenCLArrayContext,
-                                    SingleGridWorkBalancingPytatoArrayContext)
+                                    PyOpenCLArrayContext)
+from typing import Sequence
 
 import numpy as np
 
@@ -16,10 +16,17 @@ def setup_wave_solver(*,
                       dim,
                       order):
     from meshmode.mesh.generation import generate_regular_rect_mesh
+
+    if dim == 2:
+        nel_1d = 100
+    else:
+        assert dim == 3
+        nel_1d = 20
+
     mesh = generate_regular_rect_mesh(
             a=(-0.5,)*dim,
             b=(0.5,)*dim,
-            nelements_per_axis=(20,)*dim)
+            nelements_per_axis=(nel_1d,)*dim)
 
     dcoll = DiscretizationCollection(actx, mesh, order=order)
 
@@ -74,13 +81,9 @@ def setup_wave_solver(*,
 
 @dataclass(frozen=True, eq=True, repr=True)
 class WaveBenchmark(GrudgeBenchmark):
-    actx: ArrayContext
-    dim: int
-    order: int
-
-    @cached_property
-    def _setup_solver_properties(self):
-        return setup_wave_solver(actx=self.actx, dim=self.dim, order=self.order)
+    @cache
+    def _setup_solver_properties(self, actx):
+        return setup_wave_solver(actx=actx, dim=self.dim, order=self.order)
 
     @property
     def xtick(self) -> str:
@@ -91,22 +94,21 @@ class WaveRooflineBenchmark(RooflineBenchmarkMixin, WaveBenchmark):
     pass
 
 
-def get_wave_benchmarks(cq, allocator):
-    actx1 = PyOpenCLArrayContext(cq, allocator)
-    actx2 = SingleGridWorkBalancingPytatoArrayContext(cq, allocator)
-    actx3 = FusionContractorArrayContext(cq, allocator)
+def get_wave_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
+
     benchmarks = [
         [
             [
-                WaveBenchmark(actx=actx1, dim=dim, order=order),
-                WaveBenchmark(actx=actx2, dim=dim, order=order),
-                WaveBenchmark(actx=actx3, dim=dim, order=order),
-                WaveRooflineBenchmark(queue=cq, allocator=allocator, dim=dim,
-                                      order=order),
+                WaveBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
+                              dim=dim, order=order),
+                WaveBenchmark(actx_class=FusionContractorArrayContext,
+                              cl_ctx=cl_ctx,
+                              dim=dim, order=order),
+                WaveRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),
             ]
-            for order in (1, 2, 3, 4)
+            for order in orders
         ]
-        for dim in (2, 3)
+        for dim in dims
     ]
 
     return np.array(benchmarks)

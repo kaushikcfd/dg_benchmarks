@@ -1,11 +1,11 @@
 from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
-from arraycontext import ArrayContext, thaw
+from arraycontext import thaw
 from grudge import DiscretizationCollection
-from functools import cached_property
+from functools import cache
 from meshmode.array_context import (FusionContractorArrayContext,
-                                    PyOpenCLArrayContext,
-                                    SingleGridWorkBalancingPytatoArrayContext)
+                                    PyOpenCLArrayContext)
+from typing import Sequence
 
 import numpy as np
 
@@ -57,13 +57,9 @@ def setup_euler_solver(*,
 
 @dataclass(frozen=True, eq=True, repr=True)
 class EulerBenchmark(GrudgeBenchmark):
-    actx: ArrayContext
-    dim: int
-    order: int
-
-    @cached_property
-    def _setup_solver_properties(self):
-        return setup_euler_solver(actx=self.actx, dim=self.dim, order=self.order)
+    @cache
+    def _setup_solver_properties(self, actx):
+        return setup_euler_solver(actx=actx, dim=self.dim, order=self.order)
 
     @property
     def xtick(self) -> str:
@@ -74,22 +70,21 @@ class EulerRooflineBenchmark(RooflineBenchmarkMixin, EulerBenchmark):
     pass
 
 
-def get_euler_benchmarks(cq, allocator):
-    actx1 = PyOpenCLArrayContext(cq, allocator)
-    actx2 = SingleGridWorkBalancingPytatoArrayContext(cq, allocator)
-    actx3 = FusionContractorArrayContext(cq, allocator)
+def get_euler_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
+
     benchmarks = [
         [
             [
-                EulerBenchmark(actx=actx1, dim=dim, order=order),
-                EulerBenchmark(actx=actx2, dim=dim, order=order),
-                EulerBenchmark(actx=actx3, dim=dim, order=order),
-                EulerRooflineBenchmark(queue=cq, allocator=allocator, dim=dim,
-                                      order=order),
+                EulerBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
+                               dim=dim, order=order),
+                EulerBenchmark(actx_class=FusionContractorArrayContext,
+                               cl_ctx=cl_ctx,
+                               dim=dim, order=order),
+                EulerRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),
             ]
-            for order in (1, 2, 3, 4)
+            for order in orders
         ]
-        for dim in (2, 3)
+        for dim in dims
     ]
 
     return np.array(benchmarks)

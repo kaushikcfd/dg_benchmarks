@@ -1,11 +1,11 @@
 from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
-from arraycontext import ArrayContext, thaw
+from arraycontext import freeze, thaw
 from grudge import DiscretizationCollection
-from functools import cached_property
+from functools import cache
 from meshmode.array_context import (FusionContractorArrayContext,
-                                    PyOpenCLArrayContext,
-                                    SingleGridWorkBalancingPytatoArrayContext)
+                                    PyOpenCLArrayContext)
+from typing import Sequence
 
 import numpy as np
 import loopy as lp
@@ -23,10 +23,16 @@ def setup_em_solver(*,
     from grudge.models.em import MaxwellOperator, get_rectangular_cavity_mode
     from meshmode.mesh.generation import generate_regular_rect_mesh
 
+    if dim == 2:
+        nel_1d = 100
+    else:
+        assert dim == 3
+        nel_1d = 20
+
     mesh = generate_regular_rect_mesh(
             a=(0.0,)*dim,
             b=(1.0,)*dim,
-            nelements_per_axis=(4,)*dim)
+            nelements_per_axis=(nel_1d,)*dim)
 
     dcoll = DiscretizationCollection(actx, mesh, order=order)
 
@@ -53,7 +59,10 @@ def setup_em_solver(*,
         else:
             return get_rectangular_cavity_mode(actx, x, t, 1, (2, 3))
 
-    fields = cavity_mode(thaw(dcoll.nodes(), actx), t=0)
+    fields = thaw(freeze(
+                            cavity_mode(thaw(dcoll.nodes(), actx), t=0),
+                            actx),
+                  actx)
 
     maxwell_operator.check_bc_coverage(mesh)
 
@@ -68,13 +77,9 @@ def setup_em_solver(*,
 
 @dataclass(frozen=True, eq=True)
 class MaxwellBenchmark(GrudgeBenchmark):
-    actx: ArrayContext
-    dim: int
-    order: int
-
-    @cached_property
-    def _setup_solver_properties(self):
-        return setup_em_solver(actx=self.actx, dim=self.dim, order=self.order)
+    @cache
+    def _setup_solver_properties(self, actx):
+        return setup_em_solver(actx=actx, dim=self.dim, order=self.order)
 
     @property
     def xtick(self) -> str:
@@ -85,22 +90,21 @@ class MaxwellRooflineBenchmark(RooflineBenchmarkMixin, MaxwellBenchmark):
     pass
 
 
-def get_em_benchmarks(cq, allocator):
-    actx1 = PyOpenCLArrayContext(cq, allocator)
-    actx2 = SingleGridWorkBalancingPytatoArrayContext(cq, allocator)
-    actx3 = FusionContractorArrayContext(cq, allocator)
+def get_em_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
+
     benchmarks = [
         [
             [
-                MaxwellBenchmark(actx=actx1, dim=dim, order=order),
-                MaxwellBenchmark(actx=actx2, dim=dim, order=order),
-                MaxwellBenchmark(actx=actx3, dim=dim, order=order),
-                MaxwellRooflineBenchmark(queue=cq, allocator=allocator, dim=dim,
-                                         order=order),
+                MaxwellBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
+                              dim=dim, order=order),
+                MaxwellBenchmark(actx_class=FusionContractorArrayContext,
+                              cl_ctx=cl_ctx,
+                              dim=dim, order=order),
+                MaxwellRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),
             ]
-            for order in (1, 2, 3, 4)
+            for order in orders
         ]
-        for dim in (2, 3)
+        for dim in dims
     ]
 
     return np.array(benchmarks)
