@@ -138,6 +138,18 @@ class GrudgeBenchmark(Benchmark):
             n_sim_rounds += 100
             total_sim_time += (t_end - t_start)
 
+        del fields
+        del rhs
+        allocator.free_held()
+        del allocator
+
+        if issubclass(self.actx_class, (PytatoPyOpenCLArrayContext,
+                                        PyOpenCLArrayContext)):
+            import gc
+            import pyopencl.array as cla
+            gc.collect()
+            cla.zeros(cq, shape=(10,), dtype=float)
+
         return total_sim_time / n_sim_rounds
 
     @property
@@ -189,18 +201,27 @@ class RooflineBenchmarkMixin:
         compiled_rhs = actx.compile(rhs)
         compiled_rhs(0.0, fields)
 
-        return (compiled_rhs
-                .program_cache[_get_arg_id_to_arg_and_arg_id_to_descr((0.0,
-                                                                       fields),
-                                                                      {})[1]]
-                .pytato_program
-                .with_transformed_program(lambda x: x.with_kernel(
-                    x.default_entrypoint
-                    .copy(
-                        silenced_warnings=(x.default_entrypoint.silenced_warnings
-                                           + ["insn_count_subgroups_upper_bound",
-                                              "summing_if_branches_ops"]))))
-                .program)
+        result = (compiled_rhs
+                  .program_cache[_get_arg_id_to_arg_and_arg_id_to_descr((0.0,
+                                                                         fields),
+                                                                        {})[1]]
+                  .pytato_program
+                  .with_transformed_program(lambda x: x.with_kernel(
+                      x.default_entrypoint
+                      .copy(
+                          silenced_warnings=(x.default_entrypoint.silenced_warnings
+                                             + ["insn_count_subgroups_upper_bound",
+                                                "summing_if_branches_ops"]))))
+                  .program)
+        del rhs
+        allocator.free_held()
+        del allocator
+
+        import gc
+        import pyopencl.array as cla
+        gc.collect()
+        cla.zeros(cq, shape=(10,), dtype=float)
+        return result
 
     @cache
     def get_nflops(self) -> int:
@@ -284,7 +305,8 @@ def _plot_or_record(timings: npt.NDArray[np.float64],
     if plot:
         flop_rate = (nflops / timings) * 1e-9
 
-        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False)
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False,
+                                gridspec_kw={"hspace": 0.3})
 
         for irow, row in enumerate(axs):
             for icol, ax in enumerate(row):
@@ -309,9 +331,9 @@ def _plot_or_record(timings: npt.NDArray[np.float64],
                     ticker.FixedFormatter(xticks[irow, icol, :, 0]))
                 ax.set_ylabel("GFLOPs/s")
 
-        axs[-1, 0].legend(bbox_to_anchor=(1.1, -0.5),
-                        loc="lower center",
-                        ncol=bars_per_group)
+        axs[-1, 0].legend(bbox_to_anchor=(1.1, -0.35),
+                          loc="lower center",
+                          ncol=bars_per_group)
 
         return fig
 
