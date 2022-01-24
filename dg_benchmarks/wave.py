@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from arraycontext import thaw
 from grudge import DiscretizationCollection
 from pytools.obj_array import flat_obj_array
-from functools import cache
 from meshmode.array_context import (FusionContractorArrayContext,
                                     PyOpenCLArrayContext)
 from typing import Sequence
@@ -81,7 +80,6 @@ def setup_wave_solver(*,
 
 @dataclass(frozen=True, eq=True, repr=True)
 class WaveBenchmark(GrudgeBenchmark):
-    @cache
     def _setup_solver_properties(self, actx):
         return setup_wave_solver(actx=actx, dim=self.dim, order=self.order)
 
@@ -95,6 +93,7 @@ class WaveRooflineBenchmark(RooflineBenchmarkMixin, WaveBenchmark):
 
 
 def get_wave_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
+    from arraycontext import PytatoJAXArrayContext
 
     benchmarks = [
         [
@@ -102,6 +101,9 @@ def get_wave_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
                 WaveBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
                               dim=dim, order=order),
                 WaveBenchmark(actx_class=FusionContractorArrayContext,
+                              cl_ctx=cl_ctx,
+                              dim=dim, order=order),
+                WaveBenchmark(actx_class=PytatoJAXArrayContext,
                               cl_ctx=cl_ctx,
                               dim=dim, order=order),
                 WaveRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),

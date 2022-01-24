@@ -29,15 +29,15 @@ if TYPE_CHECKING:
 class Benchmark(abc.ABC):
     @property
     def warmup_rounds(self) -> int:
-        return 5
+        return 10
 
     @property
     def min_timing_rounds(self) -> int:
-        return 20
+        return 100
 
     @property
     def min_timing_secs(self) -> float:
-        return 0.2
+        return 0.5
 
     @abc.abstractproperty
     def xtick(self):
@@ -87,8 +87,10 @@ class GrudgeBenchmark(Benchmark):
 
     def get_runtime(self) -> float:
         from arraycontext import (PytatoPyOpenCLArrayContext,
-                                  PyOpenCLArrayContext)
-        from arraycontext import EagerJAXArrayContext
+                                  PyOpenCLArrayContext,
+                                  EagerJAXArrayContext,
+                                  PytatoJAXArrayContext
+                                  )
         if issubclass(self.actx_class, (PytatoPyOpenCLArrayContext,
                                         PyOpenCLArrayContext)):
             import pyopencl as cl
@@ -96,7 +98,8 @@ class GrudgeBenchmark(Benchmark):
             cq = cl.CommandQueue(self.cl_ctx)
             allocator = cl_tools.MemoryPool(cl_tools.ImmediateAllocator(cq))
             actx = self.actx_class(cq, allocator)
-        elif issubclass(self.actx_class, EagerJAXArrayContext):
+        elif issubclass(self.actx_class, (EagerJAXArrayContext,
+                                          PytatoJAXArrayContext)):
             actx = self.actx_class()
         else:
             raise NotImplementedError(self.actx_class)
@@ -140,11 +143,11 @@ class GrudgeBenchmark(Benchmark):
 
         del fields
         del rhs
-        allocator.free_held()
-        del allocator
 
         if issubclass(self.actx_class, (PytatoPyOpenCLArrayContext,
                                         PyOpenCLArrayContext)):
+            allocator.free_held()
+            del allocator
             import gc
             import pyopencl.array as cla
             gc.collect()

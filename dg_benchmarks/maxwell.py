@@ -2,7 +2,6 @@ from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
 from arraycontext import freeze, thaw
 from grudge import DiscretizationCollection
-from functools import cache
 from meshmode.array_context import (FusionContractorArrayContext,
                                     PyOpenCLArrayContext)
 from typing import Sequence
@@ -77,7 +76,6 @@ def setup_em_solver(*,
 
 @dataclass(frozen=True, eq=True)
 class MaxwellBenchmark(GrudgeBenchmark):
-    @cache
     def _setup_solver_properties(self, actx):
         return setup_em_solver(actx=actx, dim=self.dim, order=self.order)
 
@@ -91,15 +89,19 @@ class MaxwellRooflineBenchmark(RooflineBenchmarkMixin, MaxwellBenchmark):
 
 
 def get_em_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
+    from arraycontext import PytatoJAXArrayContext
 
     benchmarks = [
         [
             [
                 MaxwellBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
-                              dim=dim, order=order),
+                                 dim=dim, order=order),
                 MaxwellBenchmark(actx_class=FusionContractorArrayContext,
-                              cl_ctx=cl_ctx,
-                              dim=dim, order=order),
+                                 cl_ctx=cl_ctx,
+                                 dim=dim, order=order),
+                MaxwellBenchmark(actx_class=PytatoJAXArrayContext,
+                                 cl_ctx=cl_ctx,
+                                 dim=dim, order=order),
                 MaxwellRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),
             ]
             for order in orders
