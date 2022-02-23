@@ -22,11 +22,19 @@ def setup_em_solver(*,
     from grudge.models.em import MaxwellOperator, get_rectangular_cavity_mode
     from meshmode.mesh.generation import generate_regular_rect_mesh
 
-    if dim == 2:
-        nel_1d = 100
+    if dim == 3:
+        if order == 1:
+            nel_1d = 40
+        elif order == 2:
+            nel_1d = 35
+        elif order == 3:
+            nel_1d = 30
+        elif order == 4:
+            nel_1d = 23
+        else:
+            raise NotImplementedError(order)
     else:
-        assert dim == 3
-        nel_1d = 20
+        raise NotImplementedError
 
     mesh = generate_regular_rect_mesh(
             a=(0.0,)*dim,
@@ -59,7 +67,7 @@ def setup_em_solver(*,
             return get_rectangular_cavity_mode(actx, x, t, 1, (2, 3))
 
     fields = thaw(freeze(
-                            cavity_mode(thaw(dcoll.nodes(), actx), t=0),
+                            1j*cavity_mode(thaw(dcoll.nodes(), actx), t=0)*-1j,
                             actx),
                   actx)
 

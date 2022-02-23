@@ -15,12 +15,19 @@ def setup_wave_solver(*,
                       dim,
                       order):
     from meshmode.mesh.generation import generate_regular_rect_mesh
-
-    if dim == 2:
-        nel_1d = 100
+    if dim == 3:
+        if order == 1:
+            nel_1d = 50
+        elif order == 2:
+            nel_1d = 45
+        elif order == 3:
+            nel_1d = 40
+        elif order == 4:
+            nel_1d = 30
+        else:
+            raise NotImplementedError(order)
     else:
-        assert dim == 3
-        nel_1d = 20
+        raise NotImplementedError
 
     mesh = generate_regular_rect_mesh(
             a=(-0.5,)*dim,
