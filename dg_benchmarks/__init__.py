@@ -230,9 +230,18 @@ class RooflineBenchmarkMixin:
     def get_nflops(self) -> int:
         t_unit = self._rhs_as_loopy_knl_for_stats
         op_map = get_loopy_op_map(t_unit)
+        knl_name = t_unit.default_entrypoint.name
         # TODO: Make sure that all our DOFs are indeed represented as f64-dtypes
-        f64_ops = op_map.filter_by(dtype=[np.float64],
-                                   kernel_name="_pt_kernel").eval_and_sum({})
+        c128_ops = {op_type: (op_map.filter_by(dtype=[np.complex128],
+                                               name=op_type,
+                                               kernel_name=knl_name)
+                              .eval_and_sum({}))
+                    for op_type in ["add", "mul", "div"]}
+        f64_ops = (op_map.filter_by(dtype=[np.float64],
+                                    kernel_name="_pt_kernel").eval_and_sum({})
+                   + (2 * c128_ops["add"]
+                      + 6 * c128_ops["mul"]
+                      + (6 + 3 + 2) * c128_ops["div"]))
 
         logger.critical(f"DONE: computing nflops for {self}.")
         return f64_ops
