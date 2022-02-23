@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Type, TYPE_CHECKING
 from functools import cached_property, cache
 
+from meshmode.array_context import FusionContractorArrayContext
 from arraycontext import thaw, freeze, ArrayContext
 
 plt.style.use("seaborn")
@@ -66,6 +67,55 @@ class Benchmark(abc.ABC):
         benchmark suite. Benchmarks with lower value will get run earlier.
         """
         pass
+
+
+# {{{ actx to get the kernel with loop fusion, contraction
+
+class MinimalBytesKernelException(RuntimeError):
+    pass
+
+
+class MinimumBytesKernelGettingActx(FusionContractorArrayContext):
+    def transform_loopy_program(self, t_unit):
+        from arraycontext.impl.pytato.compile import FromArrayContextCompile
+        if t_unit.default_entrypoint.tags_of_type(FromArrayContextCompile):
+            from meshmode.array_context import (
+                fuse_same_discretization_entity_loops,
+                contract_arrays, _prepare_kernel_for_parallelization)
+
+            knl = t_unit.default_entrypoint
+
+            # {{{ dirty hack (sorry humanity)
+
+            knl = knl.copy(args=[arg.copy(offset=0)
+                                 for arg in knl.args])
+
+            # }}}
+
+            # {{{ loop fusion
+
+            knl = fuse_same_discretization_entity_loops(knl)
+
+            # }}}
+
+            # {{{ align kernels for fused einsums
+
+            knl = _prepare_kernel_for_parallelization(knl)
+
+            # }}}
+
+            # {{{ array contraction
+
+            knl = contract_arrays(knl, t_unit.callables_table)
+
+            # }}}
+
+            raise MinimalBytesKernelException(t_unit.with_kernel(knl))
+        else:
+            return super().transform_loopy_program(t_unit)
+
+# }}}
+
 
 # @lp.memoize_on_disk
 def get_loopy_op_map(t_unit):  # noqa: E302
@@ -161,8 +211,7 @@ class GrudgeBenchmark(Benchmark):
         Returns the order in which the benchmark is supposed to be run in a
         benchmark suite. Benchmarks with lower value will get run earlier.
         """
-        from meshmode.array_context import (PyOpenCLArrayContext,
-                                            FusionContractorArrayContext)
+        from meshmode.array_context import PyOpenCLArrayContext
         from arraycontext import PytatoJAXArrayContext
 
         if issubclass(self.actx_class, PyOpenCLArrayContext):
@@ -191,32 +240,32 @@ class RooflineBenchmarkMixin:
     def _rhs_as_loopy_knl_for_stats(self):
         import pyopencl as cl
         import pyopencl.tools as cl_tools
-        from meshmode.array_context import FusionContractorArrayContext
         cq = cl.CommandQueue(self.cl_ctx)
         allocator = cl_tools.MemoryPool(cl_tools.ImmediateAllocator(cq))
-        actx = FusionContractorArrayContext(cq, allocator)
+        actx = MinimumBytesKernelGettingActx(cq, allocator)
 
         rhs, fields, dt = self._setup_solver_properties(actx)
 
-        from arraycontext.impl.pytato.compile import (
-            _get_arg_id_to_arg_and_arg_id_to_descr)
-
         compiled_rhs = actx.compile(rhs)
-        compiled_rhs(0.0, fields)
 
-        result = (compiled_rhs
-                  .program_cache[_get_arg_id_to_arg_and_arg_id_to_descr((0.0,
-                                                                         fields),
-                                                                        {})[1]]
-                  .pytato_program
-                  .with_transformed_program(lambda x: x.with_kernel(
-                      x.default_entrypoint
-                      .copy(
-                          silenced_warnings=(x.default_entrypoint.silenced_warnings
-                                             + ["insn_count_subgroups_upper_bound",
-                                                "summing_if_branches_ops"]))))
-                  .program)
+        try:
+            compiled_rhs(0.0, fields)
+        except MinimalBytesKernelException as e:
+            t_unit, = e.args
+            assert isinstance(t_unit, lp.TranslationUnit)
+        else:
+            raise RuntimeError("Was expecting a 'MinimalBytesKernelException'")
+
+        knl = t_unit.default_entrypoint
+
+        t_unit = t_unit.with_kernel(knl
+                                    .copy(
+                                        silenced_warnings=(
+                                            knl.silenced_warnings
+                                            + ["insn_count_subgroups_upper_bound",
+                                               "summing_if_branches_ops"])))
         del rhs
+        del knl
         allocator.free_held()
         del allocator
 
@@ -224,25 +273,24 @@ class RooflineBenchmarkMixin:
         import pyopencl.array as cla
         gc.collect()
         cla.zeros(cq, shape=(10,), dtype=float)
-        return result
+        return t_unit
 
     @cache
     def get_nflops(self) -> int:
         t_unit = self._rhs_as_loopy_knl_for_stats
         op_map = get_loopy_op_map(t_unit)
-        knl_name = t_unit.default_entrypoint.name
+        knl = t_unit.default_entrypoint
         # TODO: Make sure that all our DOFs are indeed represented as f64-dtypes
         c128_ops = {op_type: (op_map.filter_by(dtype=[np.complex128],
                                                name=op_type,
-                                               kernel_name=knl_name)
+                                               kernel_name=knl.name)
                               .eval_and_sum({}))
                     for op_type in ["add", "mul", "div"]}
         f64_ops = (op_map.filter_by(dtype=[np.float64],
-                                    kernel_name="_pt_kernel").eval_and_sum({})
+                                    kernel_name=knl.name).eval_and_sum({})
                    + (2 * c128_ops["add"]
                       + 6 * c128_ops["mul"]
                       + (6 + 3 + 2) * c128_ops["div"]))
-
         logger.critical(f"DONE: computing nflops for {self}.")
         return f64_ops
 
