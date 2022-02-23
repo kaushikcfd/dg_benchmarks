@@ -107,10 +107,10 @@ def get_wave_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
             [
                 WaveBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
                               dim=dim, order=order),
-                WaveBenchmark(actx_class=FusionContractorArrayContext,
+                WaveBenchmark(actx_class=PytatoJAXArrayContext,
                               cl_ctx=cl_ctx,
                               dim=dim, order=order),
-                WaveBenchmark(actx_class=PytatoJAXArrayContext,
+                WaveBenchmark(actx_class=FusionContractorArrayContext,
                               cl_ctx=cl_ctx,
                               dim=dim, order=order),
                 WaveRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),

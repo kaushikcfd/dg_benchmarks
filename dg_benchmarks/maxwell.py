@@ -104,10 +104,10 @@ def get_em_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
             [
                 MaxwellBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
                                  dim=dim, order=order),
-                MaxwellBenchmark(actx_class=FusionContractorArrayContext,
+                MaxwellBenchmark(actx_class=PytatoJAXArrayContext,
                                  cl_ctx=cl_ctx,
                                  dim=dim, order=order),
-                MaxwellBenchmark(actx_class=PytatoJAXArrayContext,
+                MaxwellBenchmark(actx_class=FusionContractorArrayContext,
                                  cl_ctx=cl_ctx,
                                  dim=dim, order=order),
                 MaxwellRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),
