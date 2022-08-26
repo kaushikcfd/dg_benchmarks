@@ -33,6 +33,17 @@ def setup_em_solver(*,
             nel_1d = 23
         else:
             raise NotImplementedError(order)
+    elif dim == 2:
+        if order == 1:
+            nel_1d = 1000
+        elif order == 2:
+            nel_1d = 1000
+        elif order == 3:
+            nel_1d = 1000
+        elif order == 4:
+            nel_1d = 1000
+        else:
+            raise NotImplementedError(order)
     else:
         raise NotImplementedError
 
