@@ -16,8 +16,8 @@ logging.basicConfig(level="CRITICAL")
 def get_all_benchmarks(cl_ctx, *, dims, orders) -> npt.NDArray[Benchmark]:
     return np.array([
         get_wave_benchmarks(cl_ctx, dims=dims, orders=orders),
-        get_em_benchmarks(cl_ctx, dims=dims, orders=orders),
-        # get_euler_benchmarks(cl_ctx, dims=dims, orders=orders),
+        # get_em_benchmarks(cl_ctx, dims=dims, orders=orders),
+        get_euler_benchmarks(cl_ctx, dims=dims, orders=orders),
     ])
 
 
