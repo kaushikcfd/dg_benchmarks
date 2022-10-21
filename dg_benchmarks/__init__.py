@@ -141,6 +141,7 @@ class GrudgeBenchmark(Benchmark):
                                   EagerJAXArrayContext,
                                   PytatoJAXArrayContext
                                   )
+        from arraycontext.impls.pytato import _BasePytatoArrayContext
         if issubclass(self.actx_class, (PytatoPyOpenCLArrayContext,
                                         PyOpenCLArrayContext)):
             import pyopencl as cl
@@ -179,7 +180,8 @@ class GrudgeBenchmark(Benchmark):
             t_start = time.time()
 
             for _ in range(100):
-                fields = thaw(freeze(fields, actx), actx)
+                if isinstance(actx, _BasePytatoArrayContext):
+                    fields = thaw(freeze(fields, actx), actx)
                 fields = rhs(t, fields)
                 t += dt
 
