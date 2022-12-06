@@ -24,6 +24,7 @@ THE SOFTWARE.
 
 from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
+from pytools import memoize_on_first_arg
 from pytools.obj_array import make_obj_array
 from functools import cache
 from typing import Sequence
@@ -93,8 +94,9 @@ def acoustic_pulse_condition(x_vec, t=0):
     )
 
 
-def setup_euler_solver(*,
-                       actx,
+@memoize_on_first_arg
+def setup_euler_solver(actx,
+                       *,
                        dim,
                        order):
     from meshmode.mesh import BTAG_ALL
@@ -103,13 +105,13 @@ def setup_euler_solver(*,
 
     if dim == 3:
         if order == 1:
-            nel_1d = 50
-        elif order == 2:
             nel_1d = 45
-        elif order == 3:
-            nel_1d = 40
-        elif order == 4:
+        elif order == 2:
             nel_1d = 30
+        elif order == 3:
+            nel_1d = 25
+        elif order == 4:
+            nel_1d = 20
         else:
             raise NotImplementedError(order)
     elif dim == 2:
@@ -189,9 +191,8 @@ def setup_euler_solver(*,
 
 @dataclass(frozen=True, eq=True, repr=True)
 class EulerBenchmark(GrudgeBenchmark):
-    @cache  # noqa: B019
     def _setup_solver_properties(self, actx):
-        return setup_euler_solver(actx=actx, dim=self.dim, order=self.order)
+        return setup_euler_solver(actx, dim=self.dim, order=self.order)
 
     @property
     def xtick(self) -> str:
@@ -204,6 +205,7 @@ class EulerRooflineBenchmark(RooflineBenchmarkMixin, EulerBenchmark):
 
 def get_euler_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
 
+    from arraycontext import PytatoJAXArrayContext
     from meshmode.array_context import (FusionContractorArrayContext,
                                         PyOpenCLArrayContext)
 
@@ -213,6 +215,9 @@ def get_euler_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
                 EulerBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
                                dim=dim, order=order),
                 EulerBenchmark(actx_class=FusionContractorArrayContext,
+                               cl_ctx=cl_ctx,
+                               dim=dim, order=order),
+                EulerBenchmark(actx_class=PytatoJAXArrayContext,
                                cl_ctx=cl_ctx,
                                dim=dim, order=order),
                 EulerRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),

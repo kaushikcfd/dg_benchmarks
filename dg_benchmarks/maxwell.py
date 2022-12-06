@@ -4,6 +4,7 @@ from arraycontext import freeze, thaw
 from grudge import DiscretizationCollection
 from meshmode.array_context import (FusionContractorArrayContext,
                                     PyOpenCLArrayContext)
+from pytools import memoize_on_first_arg
 from typing import Sequence
 
 import numpy as np
@@ -15,8 +16,9 @@ def get_loopy_op_map(t_unit):
     return lp.get_op_map(t_unit, subgroup_size=32)
 
 
-def setup_em_solver(*,
-                    actx,
+@memoize_on_first_arg
+def setup_em_solver(actx,
+                    *,
                     dim,
                     order):
     from grudge.models.em import MaxwellOperator, get_rectangular_cavity_mode
@@ -96,7 +98,7 @@ def setup_em_solver(*,
 @dataclass(frozen=True, eq=True)
 class MaxwellBenchmark(GrudgeBenchmark):
     def _setup_solver_properties(self, actx):
-        return setup_em_solver(actx=actx, dim=self.dim, order=self.order)
+        return setup_em_solver(actx, dim=self.dim, order=self.order)
 
     @property
     def xtick(self) -> str:

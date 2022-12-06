@@ -11,7 +11,7 @@ import logging
 
 from dataclasses import dataclass
 from typing import Type, TYPE_CHECKING
-from functools import cached_property, cache
+from functools import cached_property
 
 from meshmode.array_context import FusionContractorArrayContext
 from arraycontext import thaw, freeze, ArrayContext
@@ -141,7 +141,7 @@ class GrudgeBenchmark(Benchmark):
                                   EagerJAXArrayContext,
                                   PytatoJAXArrayContext
                                   )
-        from arraycontext.impls.pytato import _BasePytatoArrayContext
+        from arraycontext.impl.pytato import _BasePytatoArrayContext
         if issubclass(self.actx_class, (PytatoPyOpenCLArrayContext,
                                         PyOpenCLArrayContext)):
             import pyopencl as cl
@@ -232,11 +232,24 @@ class GrudgeBenchmark(Benchmark):
         raise NotImplementedError
 
 
-@dataclass(frozen=True, eq=True)
+@dataclass(frozen=True, eq=False)
 class RooflineBenchmarkMixin:
     cl_ctx: "cl.Context"
     dim: int
     order: int
+
+    def __eq__(self, other):
+        return (self.__class__ is other.__class__
+                and self.cl_ctx.devices == other.cl_ctx.devices
+                and self.dim == other.dim
+                and self.order == other.order)
+
+    def update_persistent_hash(self, key_hash, key_builder):
+        key_builder.rec(key_hash, type(self).__name__)
+        key_builder.rec(key_hash, self.dim)
+        key_builder.rec(key_hash, self.order)
+        dev_names = [dev.name for dev in self.cl_ctx.devices]
+        key_builder.rec(key_hash, tuple(sorted(dev_names)))
 
     @cached_property
     def _rhs_as_loopy_knl_for_stats(self):
@@ -277,7 +290,7 @@ class RooflineBenchmarkMixin:
         cla.zeros(cq, shape=(10,), dtype=float)
         return t_unit
 
-    @cache
+    @lp.memoize_on_disk
     def get_nflops(self) -> int:
         t_unit = self._rhs_as_loopy_knl_for_stats
         op_map = get_loopy_op_map(t_unit)
@@ -296,7 +309,7 @@ class RooflineBenchmarkMixin:
         logger.critical(f"DONE: computing nflops for {self}.")
         return f64_ops
 
-    @cache
+    @lp.memoize_on_disk
     def get_nbytes(self) -> int:
         from pytools import product
         from loopy.kernel.array import ArrayBase
@@ -338,6 +351,25 @@ class RooflineBenchmarkMixin:
         benchmark suite. Benchmarks with lower value will get run earlier.
         """
         return 0
+
+    def __getstate__(self):
+        return {"cls_name": type(self).__name__,
+                "order": self.order,
+                "dim": self.dim,
+                "devices": tuple(sorted([dev.name
+                                         for dev in self.cl_ctx.devices]))
+                }
+
+    def __setstate__(self, d):
+        import pyopencl as cl
+        ctx = cl.create_some_context()
+        if d["devices"] != tuple(sorted([dev.name
+                                          for dev in ctx.devices])):
+            raise NotImplementedError
+
+        object.__setattr__(self, "cl_ctx", ctx)
+        object.__setattr__(self, "order", d["order"])
+        object.__setattr__(self, "dim", d["dim"])
 
 
 def _plot_or_record(timings: npt.NDArray[np.float64],

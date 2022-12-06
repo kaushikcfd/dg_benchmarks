@@ -26,6 +26,7 @@ from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
 from arraycontext import thaw
 from grudge import DiscretizationCollection
+from pytools import memoize_on_first_arg
 from pytools.obj_array import flat_obj_array
 from meshmode.array_context import (FusionContractorArrayContext,
                                     PyOpenCLArrayContext)
@@ -34,8 +35,9 @@ from typing import Sequence
 import numpy as np
 
 
-def setup_wave_solver(*,
-                      actx,
+@memoize_on_first_arg
+def setup_wave_solver(actx,
+                      *,
                       dim,
                       order):
     from meshmode.mesh.generation import generate_regular_rect_mesh
@@ -123,7 +125,7 @@ def setup_wave_solver(*,
 @dataclass(frozen=True, eq=True, repr=True)
 class WaveBenchmark(GrudgeBenchmark):
     def _setup_solver_properties(self, actx):
-        return setup_wave_solver(actx=actx, dim=self.dim, order=self.order)
+        return setup_wave_solver(actx, dim=self.dim, order=self.order)
 
     @property
     def xtick(self) -> str:
