@@ -24,9 +24,7 @@ THE SOFTWARE.
 
 from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
-from pytools import memoize_on_first_arg
 from pytools.obj_array import make_obj_array
-from functools import cache
 from typing import Sequence
 
 import numpy as np
@@ -94,7 +92,6 @@ def acoustic_pulse_condition(x_vec, t=0):
     )
 
 
-@memoize_on_first_arg
 def setup_euler_solver(actx,
                        *,
                        dim,

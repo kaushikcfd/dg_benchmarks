@@ -26,7 +26,6 @@ from dg_benchmarks import GrudgeBenchmark, RooflineBenchmarkMixin
 from dataclasses import dataclass
 from arraycontext import thaw
 from grudge import DiscretizationCollection
-from pytools import memoize_on_first_arg
 from pytools.obj_array import flat_obj_array
 from meshmode.array_context import (FusionContractorArrayContext,
                                     PyOpenCLArrayContext)
@@ -35,7 +34,6 @@ from typing import Sequence
 import numpy as np
 
 
-@memoize_on_first_arg
 def setup_wave_solver(actx,
                       *,
                       dim,

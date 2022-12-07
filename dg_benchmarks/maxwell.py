@@ -4,7 +4,6 @@ from arraycontext import freeze, thaw
 from grudge import DiscretizationCollection
 from meshmode.array_context import (FusionContractorArrayContext,
                                     PyOpenCLArrayContext)
-from pytools import memoize_on_first_arg
 from typing import Sequence
 
 import numpy as np
@@ -16,7 +15,6 @@ def get_loopy_op_map(t_unit):
     return lp.get_op_map(t_unit, subgroup_size=32)
 
 
-@memoize_on_first_arg
 def setup_em_solver(actx,
                     *,
                     dim,
