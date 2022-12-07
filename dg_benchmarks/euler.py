@@ -211,10 +211,10 @@ def get_euler_benchmarks(cl_ctx, dims: Sequence[int], orders: Sequence[int]):
             [
                 EulerBenchmark(actx_class=PyOpenCLArrayContext, cl_ctx=cl_ctx,
                                dim=dim, order=order),
-                EulerBenchmark(actx_class=FusionContractorArrayContext,
+                EulerBenchmark(actx_class=PytatoJAXArrayContext,
                                cl_ctx=cl_ctx,
                                dim=dim, order=order),
-                EulerBenchmark(actx_class=PytatoJAXArrayContext,
+                EulerBenchmark(actx_class=FusionContractorArrayContext,
                                cl_ctx=cl_ctx,
                                dim=dim, order=order),
                 EulerRooflineBenchmark(cl_ctx=cl_ctx, dim=dim, order=order),
