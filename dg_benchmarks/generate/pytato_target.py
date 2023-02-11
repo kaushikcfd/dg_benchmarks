@@ -32,8 +32,8 @@ import islpy as isl
 
 from loopy.types import LoopyType
 from dataclasses import dataclass, fields
-from typing import (Callable, Union, Optional, Mapping, Dict, TypeVar, Iterable,
-                    cast, List, Set, Type, Any)
+from typing import (Callable, Optional, Mapping, Dict, TypeVar, Iterable,
+                    cast, List, Set, Type, Any, Tuple)
 
 from pytools import UniqueNameGenerator
 from pytato.transform import CachedMapper, ArrayOrNames
@@ -98,7 +98,7 @@ def get_t_unit_for_index_lambda(expr: IndexLambda) -> lp.TranslationUnit:
                                         {f"_{i}" for i in range(expr.ndim)}
                                     ))],
         kernel_data=[lp.GlobalArg("out", shape=expr.shape, dtype=expr.dtype),
-                     *[lp.GlobalArg(name, shape=bnd[0], dtype=bnd[1])
+                     *[lp.GlobalArg(name, shape=bnd.shape, dtype=bnd.dtype)
                        for name, bnd in sorted(expr.bindings.items())]],
         lang_version=(2018, 2))
 
@@ -169,8 +169,8 @@ def _is_slice_trivial(slice_: NormalizedSlice,
 
 @dataclass(frozen=True)
 class ArraycontextProgram:
-    program: str
-    function_name: str
+    import_statements: Tuple[ast.expr, ...]
+    inner_function: ast.FunctionDef
     numpy_arrays_to_store: Mapping[str, np.ndarray]
 
 
@@ -275,7 +275,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
         if isinstance(expr, Array):
             if expr.tags:
-                rhs = ast.Call(ast.Attribute(self.actx_arg_name, "tag"),
+                rhs = ast.Call(ast.Attribute(ast.Name(self.actx_arg_name), "tag"),
                                args=[ast.Tuple(elts=[self._get_tag_expr(tag)
                                                      for tag in expr.tags])],
                                keywords=[],
@@ -283,15 +283,16 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
                 lhs = self._record_line_and_return_lhs(lhs, rhs)
 
             for iaxis, axis in enumerate(expr.axes):
-                rhs = ast.Call(
-                    ast.Attribute(self.actx_arg_name, "tag_axis"),
-                    args=[ast.Constant(iaxis),
-                          ast.Tuple(elts=[self._get_tag_expr(tag)
-                                          for tag in axis.tags]),
-                          ast.Name(lhs)],
-                    keywords=[],
-                )
-                lhs = self._record_line_and_return_lhs(lhs, rhs)
+                if axis.tags:
+                    rhs = ast.Call(
+                        ast.Attribute(ast.Name(self.actx_arg_name), "tag_axis"),
+                        args=[ast.Constant(iaxis),
+                              ast.Tuple(elts=[self._get_tag_expr(tag)
+                                              for tag in axis.tags]),
+                              ast.Name(lhs)],
+                        keywords=[],
+                    )
+                    lhs = self._record_line_and_return_lhs(lhs, rhs)
         else:
             assert isinstance(expr, AbstractResultWithNamedArrays)
             # arraycontext does not currently allowing tagging such types.
@@ -699,21 +700,14 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
 
 def generate_arraycontext_code(
-    expr: Union[Array, Mapping[str, Array], DictOfNamedArrays],
+    expr: DictOfNamedArrays,
     actx: ArrayContext,
     function_name: str,
     show_code: bool,
     colorize_show_code: Optional[bool] = None,
 ) -> BoundPythonProgram:
-    import collections
     from pytato.transform import InputGatherer
-
-    if ((not isinstance(expr, DictOfNamedArrays))
-            and isinstance(expr, collections.abc.Mapping)):
-        from pytato.array import make_dict_of_named_arrays
-        expr = make_dict_of_named_arrays(dict(expr))
-
-    assert isinstance(expr, (Array, DictOfNamedArrays))
+    assert isinstance(expr, DictOfNamedArrays)
 
     var_name_gen = UniqueNameGenerator()
 
@@ -740,7 +734,7 @@ def generate_arraycontext_code(
 
     define_t_unit_lines: List[ast.Assign] = []
 
-    for t_unit, name in sorted(cgen_mapper.seen_t_units_to_name.items(),
+    for t_unit, name in sorted(cgen_mapper.seen_tunits_to_names.items(),
                                key=lambda k, v: v):
         knl = t_unit.default_entrypoint
         if len(knl.domains) != 1 and len(knl.instructions) != 1:
@@ -805,31 +799,36 @@ def generate_arraycontext_code(
 
     # }}}
 
-    module = ast.Module(
-        body=[ast.ImportFrom("pytools", [ast.alias(name="make_obj_array")]),
-              ast.Import(names=[ast.alias(name="numpy", asname="np")]),
-              ast.Import(names=[ast.alias(name="arraycontext",
-                                          asname="make_loopy_program")]),
-              ast.Import(names=[ast.alias(name="loopy", asname="lp")]),
-              *tag_t_define_lines,
-              ast.FunctionDef(
-                  name=function_name,
-                  posonlyargs=[],
-                  args=ast.arguments(
-                      args=[ast.arg(arg="actx"), ast.arg(arg="npzfile")],
-                      posonlyargs=[],
-                      kwonlyargs=[ast.arg(arg=name)
-                                  for name in cgen_mapper.arg_names],
-                      kw_defaults=[None for _ in cgen_mapper.arg_names],
-                      defaults=[]),
-                  body=define_t_unit_lines + lines,
-              )],
-        type_ignores=[]
+    import_statements = (ast.ImportFrom("pytools",
+                                        [ast.alias(name="make_obj_array")],
+                                        level=0),
+                         ast.Import(names=[ast.alias(name="numpy", asname="np")]),
+                         ast.Import(names=[ast.alias(name="arraycontext",
+                                                     asname="make_loopy_program")]),
+                         ast.Import(names=[ast.alias(name="loopy", asname="lp")]),
+                         *tag_t_define_lines,)
+    function_def = ast.FunctionDef(
+        name=function_name,
+        posonlyargs=[],
+        args=ast.arguments(
+            args=[ast.arg(arg="actx"), ast.arg(arg="npzfile")],
+            posonlyargs=[],
+            kwonlyargs=[ast.arg(arg=name)
+                        for name in cgen_mapper.arg_names],
+            kw_defaults=[None for _ in cgen_mapper.arg_names],
+            defaults=[]),
+        body=define_t_unit_lines + lines,
+        decorator_list=[],
     )
 
-    program = ast.unparse(ast.fix_missing_locations(module))
-
     if show_code:
+        module = ast.Module(
+            body=[*import_statements, function_def],
+            type_ignores=[]
+        )
+
+        program = ast.unparse(ast.fix_missing_locations(module))
+
         if colorize_show_code is None:
             colorize_show_code = _get_default_colorize_code()
         assert isinstance(colorize_show_code, bool)
@@ -844,4 +843,6 @@ def generate_arraycontext_code(
         else:
             print(program)
 
-    return ArraycontextProgram(program, function_name, cgen_mapper.numpy_arrays)
+    return ArraycontextProgram(import_statements,
+                               function_def,
+                               cgen_mapper.numpy_arrays)
