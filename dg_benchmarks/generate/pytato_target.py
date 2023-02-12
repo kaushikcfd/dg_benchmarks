@@ -33,7 +33,7 @@ import islpy as isl
 from loopy.types import LoopyType
 from dataclasses import dataclass, fields
 from typing import (Callable, Optional, Mapping, Dict, TypeVar, Iterable,
-                    cast, List, Set, Type, Any, Tuple)
+                    cast, List, Set, Type, Any, Union)
 
 from pytools import UniqueNameGenerator
 from pytato.transform import CachedMapper, ArrayOrNames
@@ -71,9 +71,7 @@ def _can_colorize_output() -> bool:
 
 
 def _get_default_colorize_code() -> bool:
-    return ((not sys.stdout.isatty())
-            # https://no-color.org/
-            and "NO_COLOR" not in os.environ)
+    return (sys.stdout.isatty() and "NO_COLOR" not in os.environ)
 
 
 def get_t_unit_for_index_lambda(expr: IndexLambda) -> lp.TranslationUnit:
@@ -169,8 +167,8 @@ def _is_slice_trivial(slice_: NormalizedSlice,
 
 @dataclass(frozen=True)
 class ArraycontextProgram:
-    import_statements: Tuple[ast.expr, ...]
-    inner_function: ast.FunctionDef
+    import_statements: ast.Module
+    inner_function: ast.Module
     numpy_arrays_to_store: Mapping[str, np.ndarray]
 
 
@@ -700,17 +698,22 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
 
 def generate_arraycontext_code(
-    expr: DictOfNamedArrays,
+    expr: Union[Array, Mapping[str, Array], DictOfNamedArrays],
     actx: ArrayContext,
     function_name: str,
     show_code: bool,
     colorize_show_code: Optional[bool] = None,
 ) -> BoundPythonProgram:
     from pytato.transform import InputGatherer
+    import collections
+
+    if ((not isinstance(expr, DictOfNamedArrays))
+            and isinstance(expr, collections.abc.Mapping)):
+        from pytato.array import make_dict_of_named_arrays
+        expr = make_dict_of_named_arrays(dict(expr))
+
     assert isinstance(expr, DictOfNamedArrays)
-
     var_name_gen = UniqueNameGenerator()
-
     var_name_gen.add_names({input_expr.name
                             for input_expr in InputGatherer()(expr)
                             if isinstance(input_expr,
@@ -799,7 +802,7 @@ def generate_arraycontext_code(
 
     # }}}
 
-    import_statements = (ast.ImportFrom("pytools",
+    import_statements = (ast.ImportFrom("pytools.obj_array",
                                         [ast.alias(name="make_obj_array")],
                                         level=0),
                          ast.Import(names=[ast.alias(name="numpy", asname="np")]),
@@ -831,6 +834,8 @@ def generate_arraycontext_code(
 
         if colorize_show_code is None:
             colorize_show_code = _get_default_colorize_code()
+
+        assert colorize_show_code
         assert isinstance(colorize_show_code, bool)
 
         if _can_colorize_output() and colorize_show_code:
@@ -843,6 +848,8 @@ def generate_arraycontext_code(
         else:
             print(program)
 
-    return ArraycontextProgram(import_statements,
-                               function_def,
+    return ArraycontextProgram(ast.Module(body=[*import_statements],
+                                          type_ignores=[]),
+                               ast.Module(body=[function_def],
+                                          type_ignores=[]),
                                cgen_mapper.numpy_arrays)
