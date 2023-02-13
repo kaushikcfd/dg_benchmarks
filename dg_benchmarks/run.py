@@ -7,11 +7,13 @@ import pytz
 from .measure import get_flop_rate
 from .perf_model import get_roofline_flop_rate
 from typing import Type, Sequence
+from bidict import bidict
 from meshmode.arraycontext import (
     BatchedEinsumPytatoPyOpenCLArrayContext,
     PyOpenCLArrayContext as BasePyOpenCLArrayContext,
 )
 from arraycontext import ArrayContext, PytatoJAXArrayContext, EagerJAXArrayContext
+from tabulate import tabulate
 
 
 class PyOpenCLArrayContext(BasePyOpenCLArrayContext):
@@ -28,16 +30,23 @@ def _get_actx_t_priority(actx_t):
         return 1
 
 
+def stringify_flops(flops: float) -> str:
+    if np.isnan(flops):
+        return "N/A"
+    else:
+        return f"{flops*1e-9:.1f}"
+
+
 def main(equations: Sequence[str],
          dims: Sequence[int],
          degrees: Sequence[int],
-         actx_ts: Sequence[Type[ArrayContext]]):
-    actx_ts = sorted(actx_ts, key=_get_actx_t_priority)
-
+         actx_ts: Sequence[Type[ArrayContext]],
+         ):
     flop_rate = np.empty([len(actx_ts), len(dims), len(equations), len(degrees)])
     roofline_flop_rate = np.empty([len(dims), len(equations), len(degrees)])
 
-    for iactx_t, actx_t in enumerate(actx_ts):
+    for iactx_t, actx_t in sorted(enumerate(actx_ts),
+                                  key=lambda k: _get_actx_t_priority(k[1])):
         for idim, dim in enumerate(dims):
             for iequation, equation in enumerate(equations):
                 for idegree, degree in enumerate(degrees):
@@ -60,13 +69,30 @@ def main(equations: Sequence[str],
              dims=dims, actx_ts=actx_ts, flop_rate=flop_rate,
              roofline_flop_rate=roofline_flop_rate)
 
+    for idim, dim in enumerate(dims):
+        for iequation, equation in enumerate(equations):
+            print(f"FLOPS for {dim}D-{equation}:")
+            table = [["",
+                      *[_NAME_TO_ACTX_CLASS.inv[actx_t]
+                        for actx_t in actx_ts],
+                      "Roofline"]]
+            for idim, dim in enumerate(dims):
+                table.append(
+                    [f"P{dim}",
+                     *[stringify_flops(flop_rate[iactx_t, idim, iequation, idegree])
+                       for iactx_t, _ in enumerate(actx_ts)],
+                     stringify_flops(roofline_flop_rate[idim, iequation, idegree])
+                     ]
+                )
+            print(tabulate(table, tablefmt="fancy_grid"))
 
-_NAME_TO_ACTX_CLASS = {
-    "jax:jit": PytatoJAXArrayContext,
-    "jax:nojit": EagerJAXArrayContext,
-    "pytato:batched_einsum": BatchedEinsumPytatoPyOpenCLArrayContext,
+
+_NAME_TO_ACTX_CLASS = bidict({
     "pyopencl": PyOpenCLArrayContext,
-}
+    "jax:nojit": EagerJAXArrayContext,
+    "jax:jit": PytatoJAXArrayContext,
+    "pytato:batched_einsum": BatchedEinsumPytatoPyOpenCLArrayContext,
+})
 
 
 if __name__ == "__main__":
@@ -106,4 +132,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(equations=[k.strip() for k in args.equations.split(",")],
          dims=[int(k.strip()) for k in args.dims.split(",")],
-         degrees=[int(k.strip()) for k in args.degrees.split(",")])
+         degrees=[int(k.strip()) for k in args.degrees.split(",")],
+         )

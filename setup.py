@@ -44,6 +44,7 @@ setup(
                       "jaxlib",
                       "tabulate",
                       "pytz",
+                      "bidict",
                       ],
     package_data={"dg_benchmarks": ["py.typed"]},
     author="Kaushik Kulkarni",
