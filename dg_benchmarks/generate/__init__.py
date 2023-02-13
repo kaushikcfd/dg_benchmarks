@@ -90,22 +90,26 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         @memoize_on_first_arg
         def _get_compiled_rhs_inner(actx):
             from functools import partial
-            npzfile = np.load("{self.actx.save_directory}/datawrappers.npz")
+            npzfile = np.load("{self.actx.datawrappers_path}")
             return actx.compile(partial(_rhs_inner, actx=actx, npzfile=npzfile))
 
 
         @cache
         def _get_output_template():
             from pickle import load
-            with open("{self.actx.save_directory}/out_template.pkl", "rb") as fp:
+            with open("{self.actx.pickled_output_template_path}", "rb") as fp:
                 output_template = load(fp)
 
             return output_template
 
 
         @cache
-        def _get_pos_for_key_in_output_template():
+        def _get_key_to_pos_in_output_template():
+            from arraycontext.impl.pytato.compile import (
+                _ary_container_key_stringifier)
+
             output_keys = set()
+            output_template = _get_output_template()
 
             def _as_dict_of_named_arrays(keys, ary):
                 output_keys.add(keys)
@@ -114,7 +118,7 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
             rec_keyed_map_array_container(_as_dict_of_named_arrays,
                                           output_template)
 
-            return Map({{i: output_key
+            return Map({{output_key: i
                         for i, output_key in enumerate(sorted(
                                 output_keys, key=_ary_container_key_stringifier))}})
 
@@ -134,7 +138,7 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
             output_template = _get_output_template()
 
             if is_array_container(output_template):
-                keys_to_pos = _get_pos_for_key_in_output_template()
+                keys_to_pos = _get_key_to_pos_in_output_template()
 
                 def to_output_template(keys, _):
                     return result_as_np_obj_array[keys_to_pos[keys]]
@@ -153,25 +157,25 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         from pytools.codegen import remove_common_indentation
         host_code = remove_common_indentation(host_code)
 
-        with open(f"{self.actx.save_directory}/main.py", "w") as fp:
+        with open(f"{self.actx.main_file_path}", "w") as fp:
             fp.write(host_code)
 
-        with open(f"{self.actx.save_directory}/datawrappers.npz", "wb") as fp:
+        with open(f"{self.actx.datawrappers_path}", "wb") as fp:
             np.savez(fp, **inner_code_prg.numpy_arrays_to_store)
 
-        with open(f"{self.actx.save_directory}/ref_input.pkl", "wb") as fp:
+        with open(f"{self.actx.pickled_ref_input_args_path}", "wb") as fp:
             import pickle
             np_args = tuple(self.actx.to_numpy(arg) for arg in args)
             np_kwargs = tuple(self.actx.to_numpy(arg) for arg in args)
             pickle.dump((np_args, np_kwargs), fp)
 
-        with open(f"{self.actx.save_directory}/out_template.pkl", "wb") as fp:
+        with open(f"{self.actx.pickled_output_template_path}", "wb") as fp:
             import pickle
             pickle.dump(placeholder_out_template, fp)
 
         ref_out = self.actx.to_numpy(self.f(*args, **kwargs))
 
-        with open(f"{self.actx.save_directory}/ref_output.pkl", "wb") as fp:
+        with open(f"{self.actx.pickled_ref_output_path}", "wb") as fp:
             import pickle
             pickle.dump(ref_out, fp)
 
@@ -206,16 +210,30 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
 
 # TODO: derive from PytatoPyOpenCLArrayContext instead of PytatoJAXArrayContext
 class SuiteGeneratingArraycontext(PytatoJAXArrayContext):
-    def __init__(self, save_directory: str,
+    def __init__(self,
+                 main_file_path: str,
+                 datawrappers_path: str,
+                 pickled_ref_input_args_path: str,
+                 pickled_ref_output_path: str,
+                 pickled_output_template_path: str,
                  *,
                  compile_trace_callback: Optional[
                      Callable[[Any, str, Any], None]] = None
                  ) -> None:
         import os
-        if not os.path.isabs(save_directory):
-            raise ValueError(f"'{save_directory}' does not represent an"
-                             " absolute path.")
-        self.save_directory = save_directory
+        if any(not os.path.isabs(filepath)
+               for filepath in [main_file_path, datawrappers_path,
+                                pickled_ref_input_args_path,
+                                pickled_ref_output_path,
+                                pickled_output_template_path]):
+            raise ValueError("Provide")
+
+        self.main_file_path = main_file_path
+        self.datawrappers_path = datawrappers_path
+        self.pickled_ref_input_args_path = pickled_ref_input_args_path
+        self.pickled_ref_output_path = pickled_ref_output_path
+        self.pickled_output_template_path = pickled_output_template_path
+
         super().__init__()
 
     def compile(self, f: Callable[..., Any]) -> Callable[..., Any]:

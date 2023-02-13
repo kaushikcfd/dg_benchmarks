@@ -29,14 +29,21 @@ def get_benchmark_ref_input_arguments_path(
         equation: str, dim: int, degree: int) -> str:
     import os
     return os.path.join(
-        _get_benchmark_directory(equation, dim, degree), "ref_input.pkl")
+        _get_benchmark_directory(equation, dim, degree), "ref_input_args.pkl")
 
 
-def get_benchmark_ref_output_arguments_path(
+def get_benchmark_ref_output_path(
         equation: str, dim: int, degree: int) -> str:
     import os
     return os.path.join(
         _get_benchmark_directory(equation, dim, degree), "ref_outputs.pkl")
+
+
+def get_benchmark_output_template_path(
+        equation: str, dim: int, degree: int) -> str:
+    import os
+    return os.path.join(
+        _get_benchmark_directory(equation, dim, degree), "template_output.pkl")
 
 
 def get_benchmark_rhs(equation: str, dim: int, degree: int
