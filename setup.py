@@ -10,10 +10,18 @@ with open(version_file_name) as version_file:
 
 exec(compile(version_file_contents, version_file_name, "exec"), ver_dic)
 
+try:
+    import mirgecom  # noqa: F401
+except ModuleNotFoundError:
+    raise RuntimeError("Install MIRGE-Com as:\n"
+                       " - git clone https://github.com/illinois-ceesd/emirge\n"
+                       " - cd emirge\n"
+                       " - ./install.sh")
+
 setup(
     name="dg_benchmarks",
     version=ver_dic["VERSION_TEXT"],
-    description="TODO",
+    description="Run DG-FEM Benchmarks.",
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
@@ -23,7 +31,6 @@ setup(
         "Programming Language :: Python",
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Information Analysis",
@@ -32,10 +39,18 @@ setup(
         "Topic :: Software Development :: Libraries",
     ],
     python_requires="~=3.8",
-    install_requires=[
-        ],
+    install_requires=["loopy",
+                      "pytato",
+                      "meshmode",
+                      "jaxlib",
+                      "tabulate",
+                      "pytz",
+                      "bidict",
+                      "black",
+                      "autoflake",
+                      ],
     package_data={"dg_benchmarks": ["py.typed"]},
-    author="TODO",
+    author="Kaushik Kulkarni",
     url="https://github.com/kaushikcfd/dg_benchmarks",
     author_email="kgk2@illinois.edu",
     license="MIT",
