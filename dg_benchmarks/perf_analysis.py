@@ -133,8 +133,8 @@ def get_footprint_bytes(equation: str, dim: int, degree: int) -> int:
 def get_roofline_flop_rate(equation: str, dim: int, degree: int,
                            roofline_model: str = "batched_einsum:global_ai",
                            ) -> float:
-    from dg_benchmarks.device_data import (DEV_TO_PEAK_BW,
-                                           DEV_TO_PEAK_F64_GFLOPS)
+    from dg_benchmarks.consts import (DEV_TO_PEAK_BW,
+                                      DEV_TO_PEAK_F64_GFLOPS)
 
     if roofline_model == "batched_einsum:global_ai":
         import pyopencl as cl
