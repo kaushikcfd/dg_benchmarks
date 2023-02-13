@@ -111,15 +111,17 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
                                                     show_code=False)
 
         host_code = f"""
-        {ast.unparse(ast.fix_missing_locations(inner_code_prg.import_statements))}
+        {ast.unparse(ast.fix_missing_locations(
+            ast.Module(list(inner_code_prg.import_statements), type_ignores=[])))}
         from pytools import memoize_on_first_arg
         from functools import cache
         from immutables import Map
-        from arraycontext import is_array_container
+        from arraycontext import is_array_container_type
         from arraycontext.container.traversal import rec_keyed_map_array_container
 
 
-        {ast.unparse(ast.fix_missing_locations(inner_code_prg.inner_function))}
+        {ast.unparse(ast.fix_missing_locations(
+            ast.Module([inner_code_prg.function_def], type_ignores=[])))}
 
 
         @memoize_on_first_arg
@@ -172,7 +174,7 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
 
             output_template = _get_output_template()
 
-            if is_array_container(output_template):
+            if is_array_container_type(output_template.__class__):
                 keys_to_pos = _get_key_to_pos_in_output_template()
 
                 def to_output_template(keys, _):

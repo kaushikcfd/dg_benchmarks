@@ -31,16 +31,14 @@ THE SOFTWARE.
 """
 
 import ast
-import sys
-import os
 import numpy as np
 import loopy as lp
 import islpy as isl
 
 from loopy.types import LoopyType
 from dataclasses import dataclass, fields
-from typing import (Callable, Optional, Mapping, Dict, TypeVar, Iterable,
-                    cast, List, Set, Type, Any, Union)
+from typing import (Callable, Optional, Mapping, Dict, cast, List, Set, Type,
+                    Union, Tuple)
 
 from pytools import UniqueNameGenerator
 from pytato.transform import CachedMapper, ArrayOrNames
@@ -56,32 +54,29 @@ from pytato.array import (Stack, Concatenate, IndexLambda, DataWrapper,
 from pytools.tag import Tag
 from pytato.scalar_expr import SCALAR_CLASSES
 from pytato.utils import are_shape_components_equal, are_shapes_equal
-from pytato.raising import BinaryOpType, C99CallOp
+from pytato.raising import C99CallOp
 
 from pytato.target.python import BoundPythonProgram
-from pytato.reductions import (ReductionOperation, SumReductionOperation,
-                               ProductReductionOperation,
-                               MaxReductionOperation, MinReductionOperation,
-                               AllReductionOperation, AnyReductionOperation)
+from pytato.target.python.numpy_like import (first_true,
+                                             _get_einsum_subscripts,
+                                             _c99_callop_numpy_name,
+                                             _is_slice_trivial,
+                                             SIMPLE_BINOP_TO_AST_OP,
+                                             COMPARISON_OP_TO_CALL,
+                                             LOGICAL_OP_TO_CALL,
+                                             PYTATO_REDUCTION_TO_NP_REDUCTION,
+                                             _can_colorize_output,
+                                             _get_default_colorize_code,
+                                             )
 from arraycontext import ArrayContext
-
-
-T = TypeVar("T")
-
-
-def _can_colorize_output() -> bool:
-    try:
-        import pygments  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-def _get_default_colorize_code() -> bool:
-    return (sys.stdout.isatty() and "NO_COLOR" not in os.environ)
+from immutables import Map
 
 
 def get_t_unit_for_index_lambda(expr: IndexLambda) -> lp.TranslationUnit:
+    """
+    Returns a :class:`loopy.TranslationUnit` that takes the bindings of *expr*
+    as inputs and the evaluate array *expr* as output.
+    """
     # Based on Mit Kotak's CUDAGraph Target
 
     from pymbolic import var
@@ -110,111 +105,42 @@ def get_t_unit_for_index_lambda(expr: IndexLambda) -> lp.TranslationUnit:
     return knl
 
 
-MISMATCHED_C99_CALL_TO_NP_FUNC = {
-    "asin": "arcsin",
-    "acos": "arccos",
-    "atan": "arctan",
-    "atan2": "arctan2"}
-
-
-def _c99_callop_numpy_name(hlo: C99CallOp) -> str:
-    if hlo.function in MISMATCHED_C99_CALL_TO_NP_FUNC:
-        return MISMATCHED_C99_CALL_TO_NP_FUNC[hlo.function]
-    else:
-        return hlo.function
-
-
-def first_true(iterable: Iterable[T], default: T,
-               pred: Optional[Callable[[T], bool]] = None) -> T:
-    """
-    Returns the first true value in *iterable*. If no true value is found,
-    returns *default* If *pred* is not None, returns the first item for which
-    pred(item) is true.
-    """
-    # Taken from <https://docs.python.org/3/library/itertools.html#itertools-recipes>
-    # first_true([a,b,c], x) --> a or b or c or x
-    # first_true([a,b], x, f) --> a if f(a) else b if f(b) else x
-    return next(filter(pred, iterable), default)
-
-
-def _get_einsum_subscripts(einsum: Einsum) -> str:
-    from pytato.array import EinsumElementwiseAxis, EinsumAxisDescriptor
-
-    idx_stream = (chr(i) for i in range(ord("i"), ord("z")))
-    idx_gen: Callable[[], str] = lambda: next(idx_stream)  # noqa: E731
-    axis_descr_to_idx: Dict[EinsumAxisDescriptor, str] = {}
-    input_specs = []
-    for access_descr in einsum.access_descriptors:
-        spec = ""
-        for axis_descr in access_descr:
-            try:
-                spec += axis_descr_to_idx[axis_descr]
-            except KeyError:
-                axis_descr_to_idx[axis_descr] = idx_gen()
-                spec += axis_descr_to_idx[axis_descr]
-
-        input_specs.append(spec)
-
-    output_spec = "".join(axis_descr_to_idx[EinsumElementwiseAxis(i)]
-                          for i in range(einsum.ndim))
-
-    return f"{', '.join(input_specs)} -> {output_spec}"
-
-
-def _is_slice_trivial(slice_: NormalizedSlice,
-                      dim: ShapeComponent) -> bool:
-    """
-    Return *True* only if *slice_* is equivalent to the trivial slice i.e.
-    traverses an axis of length *dim* in unit steps.
-    """
-    return (are_shape_components_equal(slice_.start, 0)
-            and are_shape_components_equal(slice_.stop, dim)
-            and slice_.step == 1)
-
-
 @dataclass(frozen=True)
 class ArraycontextProgram:
-    import_statements: ast.Module
-    inner_function: ast.Module
+    """
+    .. attribute:: import_statements
+
+        Import statements for the symbols used in :attr:`function_def`.
+
+    .. attribute:: function_def
+
+        Generated AST for a function that accepts a
+        :class:`arraycontext.ArrayContext` for executing array operations.,  a
+        :class:`numpy.npzfile` for reading in the datawrappers and keyword
+        arguments arrays for the placeholder arguments and returns an array (if
+        the input computation graph returned an array) or an array container
+        (if the input computation returned a
+        :class:`pytato.array.DictOfNamedArrays`). The array container is of the
+        type of a :mod:`numpy` object array, where the components of the dict
+        of named arrays are stored in a sorted order of their keys.
+
+    .. attribute:: numpy_arrays_to_store
+
+        Numpy arrays corresponding to the datawrappers in the array computation
+        graph. These numpy arrays must be saved by the downstream user on disk
+        to obtain the :class:`numpy.npzfile` that serves as an argument for
+        :attr:`function_def`.
+    """
+    import_statements: Tuple[ast.expr, ...]
+    function_def: ast.FunctionDef
     numpy_arrays_to_store: Mapping[str, np.ndarray]
-
-
-SIMPLE_BINOP_TO_AST_OP = {BinaryOpType.ADD:         ast.Add,
-                          BinaryOpType.SUB:         ast.Sub,
-                          BinaryOpType.MULT:        ast.Mult,
-                          BinaryOpType.TRUEDIV:     ast.Div,
-                          BinaryOpType.FLOORDIV:    ast.FloorDiv,
-                          BinaryOpType.MOD:         ast.Mod,
-                          BinaryOpType.POWER:       ast.Pow,
-                          BinaryOpType.BITWISE_OR:  ast.BitOr,
-                          BinaryOpType.BITWISE_XOR: ast.BitXor,
-                          BinaryOpType.BITWISE_AND: ast.BitAnd,
-                          }
-
-COMPARISON_OP_TO_CALL = {BinaryOpType.LESS:    "less",
-                         BinaryOpType.GREATER: "greater",
-                         BinaryOpType.LESS_EQUAL: "less_equal",
-                         BinaryOpType.GREATER_EQUAL: "greater_equal",
-                         BinaryOpType.EQUAL: "equal",
-                         BinaryOpType.NOT_EQUAL: "not_equal",
-                         }
-
-LOGICAL_OP_TO_CALL = {BinaryOpType.LOGICAL_OR:  "logical_or",
-                      BinaryOpType.LOGICAL_AND: "logical_and",
-                      }
-
-PYTATO_REDUCTION_TO_NP_REDUCTION: Mapping[Type[ReductionOperation], str] = {
-    SumReductionOperation: "sum",
-    ProductReductionOperation: "product",
-    MaxReductionOperation: "max",
-    MinReductionOperation: "min",
-    AllReductionOperation: "all",
-    AnyReductionOperation: "any",
-}
 
 
 class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
     """
+    A :class:`~pytato.target.Target` that translates array operations as
+    :mod:`arraycontext` operations.
+
     .. note::
 
         - This mapper stores mutable state for building the program. The same
@@ -240,6 +166,8 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
         self.seen_tunits_to_names: Dict[lp.TranslationUnit, str] = {}
 
     def get_t_unit_var_name(self, t_unit: lp.TranslationUnit) -> str:
+        """
+        """
         try:
             return self.seen_tunits_to_names[t_unit]
         except KeyError:
@@ -275,8 +203,10 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
                         args=args,
                         keywords=kwargs)
 
-    def rec(self, expr: ArrayOrNames) -> Any:
-        lhs = super().rec(expr)
+    def rec(self, expr: ArrayOrNames) -> str:  # type: ignore[override]
+        from typing import cast
+        lhs = cast(str, super().rec(expr))
+        assert isinstance(lhs, str)
 
         if isinstance(expr, Array):
             if expr.tags:
@@ -708,9 +638,15 @@ def generate_arraycontext_code(
     expr: Union[Array, Mapping[str, Array], DictOfNamedArrays],
     actx: ArrayContext,
     function_name: str,
-    show_code: bool,
+    show_code: bool = False,
     colorize_show_code: Optional[bool] = None,
 ) -> BoundPythonProgram:
+    """
+    Compiles *expr* to python code with :mod:`arraycontext` calls for the
+    individual array operations. The generated python function definition
+    can be run using any instance of :class:`arraycontext.ArrayContext`.
+    """
+
     from pytato.transform import InputGatherer
     import collections
 
@@ -855,8 +791,6 @@ def generate_arraycontext_code(
         else:
             print(program)
 
-    return ArraycontextProgram(ast.Module(body=[*import_statements],
-                                          type_ignores=[]),
-                               ast.Module(body=[function_def],
-                                          type_ignores=[]),
-                               cgen_mapper.numpy_arrays)
+    return ArraycontextProgram(import_statements,
+                               function_def,
+                               Map(cgen_mapper.numpy_arrays))

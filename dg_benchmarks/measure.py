@@ -1,3 +1,8 @@
+"""
+Utilities for performance evaluation of a DG-FEM benchmark.
+
+.. autofunction:: get_flop_rate
+"""
 import numpy as np
 
 from arraycontext import (ArrayContext, PyOpenCLArrayContext,
@@ -10,7 +15,7 @@ from dg_benchmarks.utils import (get_benchmark_rhs,
                                  get_benchmark_ref_input_arguments_path,
                                  get_benchmark_ref_output_arguments_path)
 
-from dg_benchmarks.perf_analysis import get_flops
+from dg_benchmarks.perf_analysis import get_f64_flops
 from time import time
 
 
@@ -40,6 +45,11 @@ def _instantiate_actx_t(actx_t: Type[ArrayContext]) -> ArrayContext:
 
 def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
                   degree: int) -> float:
+    """
+    Runs the benchmarks corresponding to *equation*, *dim*, *degree* using an
+    instance of *actx_t* and returns the FLOP-through as "Total number of
+    Floating Point Operations per second".
+    """
     rhs_clbl = get_benchmark_rhs(equation, dim, degree)
     actx = _instantiate_actx_t(actx_t)
 
@@ -94,6 +104,6 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
 
     # }}}
 
-    flops = get_flops(equation, dim, degree)
+    flops = get_f64_flops(equation, dim, degree)
 
     return (flops * i_timing) / t_rhs

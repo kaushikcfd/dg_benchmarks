@@ -1,3 +1,8 @@
+__doc__ = """
+A binary for running DG-FEM benchmarks for an array of arraycontexts. Call as
+``python run.py -h`` for a detailed description on how to run the benchmarks.
+"""
+
 import argparse
 import loopy as lp
 import numpy as np
@@ -45,6 +50,8 @@ def main(equations: Sequence[str],
     flop_rate = np.empty([len(actx_ts), len(dims), len(equations), len(degrees)])
     roofline_flop_rate = np.empty([len(dims), len(equations), len(degrees)])
 
+    # sorting `actx_ts` to run JAX related operations at the end as they only
+    # free the device memory atexit
     for iactx_t, actx_t in sorted(enumerate(actx_ts),
                                   key=lambda k: _get_actx_t_priority(k[1])):
         for idim, dim in enumerate(dims):
