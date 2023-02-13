@@ -1,13 +1,28 @@
 from typing import Any, Callable
 
 
-def _get_benchmark_directory(equation: str, dim: int, degree: int) -> str:
-    import importlib.utils
+def get_dg_benchmarks_path() -> str:
+    """
+    Returns the absolute path for the install location of :mod:`dg_benchmarks`.
+    """
+    import importlib.util
     import os
 
-    dir_path = os.path.abspath(
-        os.path.join(importlib.util.find_spec("dg_benchmarks").origin,
-                     "suite", f"{equation}_{dim}D_P{degree}"))
+    module_path = os.path.abspath(
+        os.path.join(
+            importlib.util.find_spec("dg_benchmarks").origin,
+            os.path.pardir
+        )
+    )
+    assert os.path.isdir(module_path), module_path
+    return os.path.abspath(module_path)
+
+
+def _get_benchmark_directory(equation: str, dim: int, degree: int) -> str:
+    import os
+
+    dir_path = os.path.join(get_dg_benchmarks_path(),
+                            "suite", f"{equation}_{dim}D_P{degree}")
 
     assert os.path.isdir(dir_path)
     return dir_path

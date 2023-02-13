@@ -4,6 +4,8 @@ Helpers to generate python code compatible with any
 
 .. autoclass:: SuiteGeneratingArraycontext
 """
+
+import os
 import ast
 import pytato as pt
 import numpy as np
@@ -16,6 +18,7 @@ from arraycontext.container.traversal import (rec_keyed_map_array_container,
 from typing import Callable, Any, Type, Optional, Dict
 from arraycontext.impl.pytato.compile import (BaseLazilyCompilingFunctionCaller,
                                               CompiledFunction)
+from dg_benchmarks.utils import get_dg_benchmarks_path
 import autoflake
 import black
 from pathlib import Path
@@ -118,6 +121,7 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         from immutables import Map
         from arraycontext import is_array_container_type
         from arraycontext.container.traversal import rec_keyed_map_array_container
+        from dg_benchmarks.utils import get_dg_benchmarks_path
 
 
         {ast.unparse(ast.fix_missing_locations(
@@ -127,14 +131,24 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         @memoize_on_first_arg
         def _get_compiled_rhs_inner(actx):
             from functools import partial
-            npzfile = np.load("{self.actx.datawrappers_path}")
+            import os
+            npzfile = np.load(
+                os.path.join(get_dg_benchmarks_path(),
+                             "{os.path.relpath(self.actx.datawrappers_path,
+                                               start=get_dg_benchmarks_path())}")
+            )
             return actx.compile(partial(_rhs_inner, actx=actx, npzfile=npzfile))
 
 
         @cache
         def _get_output_template():
             from pickle import load
-            with open("{self.actx.pickled_output_template_path}", "rb") as fp:
+            import os
+
+            fpath = os.path.join(get_dg_benchmarks_path(),
+                                "{os.path.relpath(self.actx.pickled_output_template_path,
+                                                  start=get_dg_benchmarks_path())}")
+            with open(fpath, "rb") as fp:
                 output_template = load(fp)
 
             return output_template
@@ -277,7 +291,6 @@ class SuiteGeneratingArraycontext(PytatoJAXArrayContext):
                  compile_trace_callback: Optional[
                      Callable[[Any, str, Any], None]] = None
                  ) -> None:
-        import os
         if any(not os.path.isabs(filepath)
                for filepath in [main_file_path, datawrappers_path,
                                 pickled_ref_input_args_path,
