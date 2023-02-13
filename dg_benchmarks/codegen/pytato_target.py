@@ -1,3 +1,10 @@
+"""
+Provides a :mod:`pytato` target that translates array operations to
+:mod:`arraycontext` calls.
+
+.. autofunction:: generate_arraycontext_code
+"""
+
 __copyright__ = """
 Copyright (C) 2023 Kaushik Kulkarni
 Copyright (C) 2023 Mit Kotak
@@ -75,7 +82,7 @@ def _get_default_colorize_code() -> bool:
 
 
 def get_t_unit_for_index_lambda(expr: IndexLambda) -> lp.TranslationUnit:
-    # Based Mit Kotak's CUDAGraph Target
+    # Based on Mit Kotak's CUDAGraph Target
 
     from pymbolic import var
     dim_to_bounds = {f"_{i}": (0, dim) for i, dim in enumerate(expr.shape)}

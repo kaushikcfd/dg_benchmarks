@@ -1,7 +1,14 @@
+r"""
+Helpers to generate python code compatible with any
+:class:`~arraycontext.ArrayContext`\ 's compile method.
+
+.. autoclass:: SuiteGeneratingArraycontext
+"""
 import ast
 import pytato as pt
 import numpy as np
 import re
+import sys
 
 from arraycontext import PytatoJAXArrayContext, is_array_container_type
 from arraycontext.container.traversal import (rec_keyed_map_array_container,
@@ -9,20 +16,48 @@ from arraycontext.container.traversal import (rec_keyed_map_array_container,
 from typing import Callable, Any, Type, Optional, Dict
 from arraycontext.impl.pytato.compile import (BaseLazilyCompilingFunctionCaller,
                                               CompiledFunction)
+import autoflake
+import black
+from pathlib import Path
 # from meshmode.array_context import BatchedEinsumArrayContext
 
 
 class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCaller):
+    """
+    Traces :attr:`BaseLazilyCompilingFunctionCaller.f` to translate the array
+    operations to python code that calls equivalent methods of
+    :class:`arraycontext.ArrayContext` / :class:`arraycontext.FakeNumpyNamespace`.
+    """
     @property
     def compiled_function_returning_array_container_class(
             self) -> Type[CompiledFunction]:
+        # This is purposefully left unimplemented to ensure that we do not run
+        # into potential mishaps by using the super-class' implementation.
+        # TODO: Maybe fix the abstract class' implementation so that it does
+        # not rely on us overriding these routines.
         raise NotImplementedError
 
     @property
     def compiled_function_returning_array_class(self) -> Type[CompiledFunction]:
+        # This is purposefully left unimplemented to ensure that we do not run
+        # into potential mishaps by using the super-class' implementation.
+        # TODO: Maybe fix the abstract class' implementation so that it does
+        # not rely on us overriding these routines.
         raise NotImplementedError
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Performs the following operations:
+
+        #. Writes the generated code to disk at the location
+            :attr:`SuiteGeneratingArraycontext.main_file_path`.
+        #. Compiles the generated code and executes it with the arguments
+            *args*, *kwargs* and returns the output.
+
+        .. note::
+
+            The behavior of this routine emulates calling :attr:`f` itself.
+        """
         from arraycontext.impl.pytato.compile import (
             _get_arg_id_to_arg_and_arg_id_to_descr,
             _ary_container_key_stringifier,
@@ -160,6 +195,20 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         with open(f"{self.actx.main_file_path}", "w") as fp:
             fp.write(host_code)
 
+        autoflake._main(["--remove-unused-variables",
+                         "--imports", "loopy,arraycontext",
+                         "--in-place",
+                         self.actx.main_file_path,
+                         ],
+                        standard_out=None,
+                        standard_error=sys.stderr,
+                        standard_input=sys.stdin,
+                        )
+        black.format_file_in_place(Path(self.actx.main_file_path),
+                                   fast=False,
+                                   mode=black.Mode(line_length=80),
+                                   write_back=black.WriteBack.YES)
+
         with open(f"{self.actx.datawrappers_path}", "wb") as fp:
             np.savez(fp, **inner_code_prg.numpy_arrays_to_store)
 
@@ -210,6 +259,12 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
 
 # TODO: derive from PytatoPyOpenCLArrayContext instead of PytatoJAXArrayContext
 class SuiteGeneratingArraycontext(PytatoJAXArrayContext):
+    """
+    Overrides the :meth:`compile` method of
+    :class:`arraycontext.PytatoJAXArrayContext` to generate python code that is
+    compatible to run with any :class:`ArrayContext` and then executes the
+    generated code.
+    """
     def __init__(self,
                  main_file_path: str,
                  datawrappers_path: str,
@@ -226,7 +281,7 @@ class SuiteGeneratingArraycontext(PytatoJAXArrayContext):
                                 pickled_ref_input_args_path,
                                 pickled_ref_output_path,
                                 pickled_output_template_path]):
-            raise ValueError("Provide")
+            raise ValueError("Absolute paths are expected.")
 
         self.main_file_path = main_file_path
         self.datawrappers_path = datawrappers_path
