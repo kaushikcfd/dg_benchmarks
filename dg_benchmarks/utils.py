@@ -60,9 +60,12 @@ def get_benchmark_ref_output_path(
 def get_benchmark_rhs(equation: str, dim: int, degree: int
                       ) -> Callable[..., Any]:
     import importlib.util
+    import os
+
     spec = importlib.util.spec_from_file_location(
         "main",
-        _get_benchmark_directory(equation, dim, degree))
+        os.path.join(_get_benchmark_directory(equation, dim, degree),
+                     "main.py"))
 
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Cannot find benchmark for equation '{equation}'"

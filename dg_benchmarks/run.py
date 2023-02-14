@@ -9,11 +9,11 @@ import numpy as np
 import datetime
 import pytz
 
-from .measure import get_flop_rate
-from .perf_model import get_roofline_flop_rate
+from dg_benchmarks.measure import get_flop_rate
+from dg_benchmarks.perf_analysis import get_roofline_flop_rate
 from typing import Type, Sequence
 from bidict import bidict
-from meshmode.arraycontext import (
+from meshmode.array_context import (
     BatchedEinsumPytatoPyOpenCLArrayContext,
     PyOpenCLArrayContext as BasePyOpenCLArrayContext,
 )
@@ -109,7 +109,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("--equations", metavar="E", type=str,
-                        nargs=1,
                         help=("comma separated strings representing which"
                               " equations to time (for ex. 'wave,euler')"),
                         required=True,
@@ -140,4 +139,5 @@ if __name__ == "__main__":
     main(equations=[k.strip() for k in args.equations.split(",")],
          dims=[int(k.strip()) for k in args.dims.split(",")],
          degrees=[int(k.strip()) for k in args.degrees.split(",")],
+         actx_ts=[_NAME_TO_ACTX_CLASS[k] for k in args.actxs.split(",")],
          )
