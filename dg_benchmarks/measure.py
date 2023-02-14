@@ -13,9 +13,9 @@ from arraycontext import (ArrayContext, PyOpenCLArrayContext,
 from typing import Type
 from dg_benchmarks.utils import (get_benchmark_rhs,
                                  get_benchmark_ref_input_arguments_path,
-                                 get_benchmark_ref_output_arguments_path)
+                                 get_benchmark_ref_output_path)
 
-from dg_benchmarks.perf_analysis import get_f64_flops
+from dg_benchmarks.perf_analysis import get_float64_flops
 from time import time
 
 
@@ -58,8 +58,7 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
         import pickle
         np_args, np_kwargs = pickle.load(fp)
 
-    with open(get_benchmark_ref_output_arguments_path(equation, dim, degree),
-              "rb") as fp:
+    with open(get_benchmark_ref_output_path(equation, dim, degree), "rb") as fp:
         ref_output = pickle.load()
 
     args, kwargs = (tuple(actx.from_numpy(arg) for arg in np_args),
@@ -104,6 +103,6 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
 
     # }}}
 
-    flops = get_f64_flops(equation, dim, degree)
+    flops = get_float64_flops(equation, dim, degree)
 
     return (flops * i_timing) / t_rhs
