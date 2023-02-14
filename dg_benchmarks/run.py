@@ -25,7 +25,10 @@ class PyOpenCLArrayContext(BasePyOpenCLArrayContext):
     def transform_loopy_program(self,
                                 t_unit: lp.TranslationUnit
                                 ) -> lp.TranslationUnit:
-        raise NotImplementedError
+        from meshmode.arraycontext_extras.split_actx.utils import (
+            split_iteration_domain_across_work_items)
+        t_unit = split_iteration_domain_across_work_items(t_unit, self.queue.device)
+        return t_unit
 
 
 def _get_actx_t_priority(actx_t):
