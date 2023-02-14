@@ -780,7 +780,7 @@ def generate_arraycontext_code(
             args=[ast.arg(arg="actx"), ast.arg(arg="npzfile")],
             posonlyargs=[],
             kwonlyargs=[ast.arg(arg=name)
-                        for name in cgen_mapper.arg_names],
+                        for name in sorted(cgen_mapper.arg_names)],
             kw_defaults=[None for _ in cgen_mapper.arg_names],
             defaults=[]),
         body=define_t_unit_lines + lines,
