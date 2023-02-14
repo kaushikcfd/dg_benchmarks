@@ -120,7 +120,7 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         host_code = f"""
         {ast.unparse(ast.fix_missing_locations(
             ast.Module(list(inner_code_prg.import_statements), type_ignores=[])))}
-        from pytools import memoize_on_first_arg
+        from pytools import memoize_on_first_arg, keyed_memoize_on_first_arg
         from functools import cache
         from immutables import Map
         from arraycontext import is_array_container_type
@@ -131,6 +131,11 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
 
         {ast.unparse(ast.fix_missing_locations(
             ast.Module([inner_code_prg.function_def], type_ignores=[])))}
+
+
+        @keyed_memoize_on_first_arg(key=lambda a, b: b)
+        def _from_numpy(actx, npzfile, name):
+            return actx.freeze(actx.from_numpy(npzfile[name]))
 
 
         @memoize_on_first_arg

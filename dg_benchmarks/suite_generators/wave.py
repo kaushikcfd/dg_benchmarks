@@ -174,16 +174,21 @@ def bump(actx, dcoll, t=0):
             / source_width**2))
 
 
+GLOBAL_NDOFS = 3e6
+
+
 def _get_nel_1d(dim: int, order: int) -> int:
+    from math import ceil
+
     if dim == 3:
         if order == 1:
-            nel_1d = 50
+            nel_1d = ceil(((GLOBAL_NDOFS/4)/6)**(1/3))
         elif order == 2:
-            nel_1d = 45
+            nel_1d = ceil(((GLOBAL_NDOFS/10)/6)**(1/3))
         elif order == 3:
-            nel_1d = 40
+            nel_1d = ceil(((GLOBAL_NDOFS/20)/6)**(1/3))
         elif order == 4:
-            nel_1d = 30
+            nel_1d = ceil(((GLOBAL_NDOFS/35)/6)**(1/3))
         else:
             raise NotImplementedError(order)
     elif dim == 2:

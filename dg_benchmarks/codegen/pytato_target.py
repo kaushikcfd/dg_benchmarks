@@ -38,7 +38,7 @@ import islpy as isl
 from loopy.types import LoopyType
 from dataclasses import dataclass, fields
 from typing import (Callable, Optional, Mapping, Dict, cast, List, Set, Type,
-                    Union, Tuple, FrozenSet)
+                    Union, Tuple, FrozenSet, Sequence)
 
 from pytools import UniqueNameGenerator
 from pytato.transform import CachedMapper, ArrayOrNames
@@ -166,6 +166,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
         self.numpy_arrays: Dict[str, np.ndarray] = {}
         self.seen_tags_to_names: Dict[Type[Tag], str] = {}
         self.seen_tunits_to_names: Dict[lp.TranslationUnit, str] = {}
+        self.temp_var_names: Set[str] = set()
 
     def get_t_unit_var_name(self, t_unit: lp.TranslationUnit) -> str:
         """
@@ -261,6 +262,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
                                     BinaryOpType)
         hlo = index_lambda_to_high_level_op(expr)
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
         rhs: ast.expr
 
         def _rec_ary_or_constant(e: ArrayOrScalar) -> ast.expr:
@@ -456,6 +458,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
         rec_ids = [self.rec(ary) for ary in expr.arrays]
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
         rhs = ast.Call(ast.Attribute(self.actx_np, "stack"),
                        args=[ast.List([ast.Name(id_)
                                        for id_ in rec_ids])],
@@ -469,6 +472,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
         rec_ids = [self.rec(ary) for ary in expr.arrays]
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
         rhs = ast.Call(ast.Attribute(self.actx_np, "concatenate"),
                        args=[ast.List([ast.Name(id_)
                                        for id_ in rec_ids])],
@@ -479,6 +483,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
     def map_roll(self, expr: Roll) -> str:
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
         rhs = ast.Call(ast.Attribute(self.actx_np, "roll"),
                        args=[ast.Name(self.rec(expr.array)),
                              ],
@@ -491,6 +496,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
     def map_axis_permutation(self, expr: AxisPermutation) -> str:
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
         if expr.axis_permutation == tuple(range(expr.ndim))[::-1]:
             rhs: ast.expr = ast.Attribute(ast.Name(self.rec(expr.array)), "T")
         else:
@@ -519,6 +525,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
             return self.rec(expr.array)  # type: ignore[no-any-return]
 
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
 
         def _rec_idx(idx: IndexExpr, dim: ShapeComponent) -> ast.expr:
             if isinstance(idx, int):
@@ -599,12 +606,16 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
     def map_data_wrapper(self, expr: DataWrapper) -> str:
         lhs = self.vng("_pt_data") if expr.name is None else expr.name
         self.numpy_arrays[lhs] = self.actx.to_numpy(expr)
-        rhs = ast.Call(
-            ast.Attribute(ast.Name(self.actx_arg_name), "from_numpy"),
-            args=[ast.Subscript(ast.Name(self.npzfile_arg_name),
-                                ast.Constant(lhs))],
-            keywords=[],
-        )
+        rhs = ast.Call(ast.Attribute(ast.Name(self.actx_arg_name), "thaw"),
+                       args=[ast.Call(
+                           ast.Name("_from_numpy"),
+                           args=[ast.Name(self.actx_arg_name),
+                                 ast.Name(self.npzfile_arg_name),
+                                 ast.Constant(lhs)],
+                           keywords=[],
+                       )],
+                       keywords=[],
+                       )
         return self._record_line_and_return_lhs(lhs, rhs)
 
     def map_size_param(self, expr: SizeParam) -> str:
@@ -613,6 +624,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
     def map_einsum(self, expr: Einsum) -> str:
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
         args = [ast.Name(self.rec(arg)) for arg in expr.args]
         rhs = ast.Call(ast.Attribute(ast.Name(self.actx_arg_name), "einsum"),
                         args=[ast.Constant(_get_einsum_subscripts(expr)),
@@ -624,6 +636,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
     def map_reshape(self, expr: Reshape) -> str:
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
         if not all(isinstance(d, int) for d in expr.shape):
             raise NotImplementedError("Non-integral reshapes.")
         rhs = ast.Call(ast.Attribute(self.actx_np, "reshape"),
@@ -637,6 +650,7 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
 
     def map_dict_of_named_arrays(self, expr: DictOfNamedArrays) -> str:
         lhs = self.vng("_pt_tmp")
+        self.temp_var_names.add(lhs)
 
         values = []
         for name, subexpr in sorted(expr._data.items()):
@@ -649,6 +663,37 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
                        keywords=[])
 
         return self._record_line_and_return_lhs(lhs, rhs)
+
+
+def _delete_arrays_post_live_interval(
+        lines: Sequence[ast.expr], temp_vars: FrozenSet[str]
+) -> Tuple[ast.expr, ...]:
+
+    temp_var_to_deletable_i_line = {}
+    for i_line, line in enumerate(lines):
+        for node in ast.walk(line):
+            if isinstance(node, ast.Name) and node.id in temp_vars:
+                temp_var_to_deletable_i_line[node.id] = i_line + 1
+
+    iline_to_deletable_temp_vars: Dict[int, Set[str]] = {
+        i_line: set()
+        for i_line in range(len(lines)+1)
+    }
+    for temp_var, i_line in temp_var_to_deletable_i_line.items():
+        iline_to_deletable_temp_vars[i_line].add(temp_var)
+
+    new_lines: List[ast.expr] = []
+
+    for i_line, line in enumerate(lines):
+        new_lines.append(line)
+        if iline_to_deletable_temp_vars[i_line]:
+            vars_to_delete = iline_to_deletable_temp_vars[i_line]
+            new_lines.append(
+                ast.Delete(targets=[ast.Name(var_name)
+                                    for var_name in sorted(vars_to_delete)])
+            )
+
+    return tuple(new_lines)
 
 
 def generate_arraycontext_code(
@@ -692,6 +737,9 @@ def generate_arraycontext_code(
 
     lines = cgen_mapper.lines
     lines.append(ast.Return(ast.Name(result_var)))
+
+    lines = _delete_arrays_post_live_interval(lines,
+                                              frozenset(cgen_mapper.temp_var_names))
 
     # {{{ define the translation units
 
@@ -783,7 +831,7 @@ def generate_arraycontext_code(
                         for name in sorted(cgen_mapper.arg_names)],
             kw_defaults=[None for _ in cgen_mapper.arg_names],
             defaults=[]),
-        body=define_t_unit_lines + lines,
+        body=define_t_unit_lines + list(lines),
         decorator_list=[],
     )
 
