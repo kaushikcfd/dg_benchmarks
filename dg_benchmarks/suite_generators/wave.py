@@ -259,37 +259,4 @@ def main(dim, order, actx, *, use_nonaffine_mesh=False):
     fields = actx.thaw(actx.freeze(fields))
     compiled_rhs(t, fields)
 
-
-if __name__ == "__main__":
-    import argparse
-    from dg_benchmarks.codegen import SuiteGeneratingArraycontext
-    from dg_benchmarks import utils
-    import pyopencl as cl
-    import pyopencl.tools as cl_tools
-
-    cl_ctx = cl.create_some_context()
-    cq = cl.CommandQueue(cl_ctx)
-    allocator = cl_tools.MemoryPool(cl_tools.ImmediateAllocator(cq))
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dim", type=int, required=True)
-    parser.add_argument("--degree", type=int, required=True)
-
-    args = parser.parse_args()
-
-    actx = SuiteGeneratingArraycontext(
-        cq,
-        allocator,
-        main_file_path=utils.get_benchmark_main_file_path(
-            "wave", args.dim, args.degree),
-        datawrappers_path=utils.get_benchmark_literals_path(
-            "wave", args.dim, args.degree),
-        pickled_ref_input_args_path=utils.get_benchmark_ref_input_arguments_path(
-            "wave", args.dim, args.degree),
-        pickled_ref_output_path=utils.get_benchmark_ref_output_path(
-            "wave", args.dim, args.degree),
-    )
-
-    main(dim=args.dim, order=args.degree, actx=actx)
-
 # vim: foldmethod=marker

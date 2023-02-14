@@ -24,8 +24,8 @@ def _rhs_inner(
     actx,
     npzfile,
     *,
-    _actx_in_1_v_0_0,
     _actx_in_1_u_0,
+    _actx_in_1_v_0_0,
     _actx_in_1_v_1_0,
     _actx_in_1_v_2_0
 ):

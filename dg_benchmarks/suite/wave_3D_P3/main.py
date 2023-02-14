@@ -24,10 +24,10 @@ def _rhs_inner(
     actx,
     npzfile,
     *,
+    _actx_in_1_u_0,
     _actx_in_1_v_0_0,
-    _actx_in_1_v_2_0,
     _actx_in_1_v_1_0,
-    _actx_in_1_u_0
+    _actx_in_1_v_2_0
 ):
     _pt_t_unit = make_loopy_program(
         "{ [_0, _1] : 0 <= _0 <= 19199 and 0 <= _1 <= 9 }",
