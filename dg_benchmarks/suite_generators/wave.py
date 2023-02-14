@@ -255,30 +255,41 @@ def main(dim, order, actx, *, use_nonaffine_mesh=False):
 
     logger.info("dt = %g", dt)
 
-    t = np.float64(0.0)
+    t = np.float64(0.5)
+    fields = actx.thaw(actx.freeze(fields))
     compiled_rhs(t, fields)
 
 
 if __name__ == "__main__":
     import argparse
-    from jax.config import config
-    from dg_benchmarks.codegen import SuiteGeneratingArrayContext
+    from dg_benchmarks.codegen import SuiteGeneratingArraycontext
     from dg_benchmarks import utils
+    import pyopencl as cl
+    import pyopencl.tools as cl_tools
+
+    cl_ctx = cl.create_some_context()
+    cq = cl.CommandQueue(cl_ctx)
+    allocator = cl_tools.MemoryPool(cl_tools.ImmediateAllocator(cq))
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dim", type=int, required=True)
-    parser.add_argument("--order", type=int, required=True)
+    parser.add_argument("--degree", type=int, required=True)
 
     args = parser.parse_args()
-    config.update("jax_enable_x64", True)
-    actx = SuiteGeneratingArrayContext(
-        utils.get_benchmarks_main_file_path("wave", args.dim, args.order),
-        utils.get_benchmarks_literals_path("wave", args.dim, args.order),
-        utils.get_benchmark_ref_input_arguments_path("wave", args.dim, args.order),
-        utils.get_benchmark_ref_output_path("wave", args.dim, args.order),
-        utils.get_benchmark_output_template_path("wave", args.dim, args.order),
+
+    actx = SuiteGeneratingArraycontext(
+        cq,
+        allocator,
+        main_file_path=utils.get_benchmark_main_file_path(
+            "wave", args.dim, args.degree),
+        datawrappers_path=utils.get_benchmark_literals_path(
+            "wave", args.dim, args.degree),
+        pickled_ref_input_args_path=utils.get_benchmark_ref_input_arguments_path(
+            "wave", args.dim, args.degree),
+        pickled_ref_output_path=utils.get_benchmark_ref_output_path(
+            "wave", args.dim, args.degree),
     )
 
-    main(dim=args.dim, order=args.order, actx=actx)
+    main(dim=args.dim, order=args.degree, actx=actx)
 
 # vim: foldmethod=marker

@@ -12,17 +12,24 @@ import numpy as np
 import re
 import sys
 
-from arraycontext import PytatoJAXArrayContext, is_array_container_type
+from dataclasses import is_dataclass
+from arraycontext import is_array_container_type
 from arraycontext.container.traversal import (rec_keyed_map_array_container,
                                               rec_multimap_array_container)
-from typing import Callable, Any, Type, Optional, Dict
+from typing import Callable, Any, Type, Dict
 from arraycontext.impl.pytato.compile import (BaseLazilyCompilingFunctionCaller,
                                               CompiledFunction)
 from dg_benchmarks.utils import get_dg_benchmarks_path
+from meshmode.dof_array import array_context_for_pickling
 import autoflake
 import black
 from pathlib import Path
-# from meshmode.array_context import BatchedEinsumArrayContext
+from meshmode.array_context import (
+    BatchedEinsumPytatoPyOpenCLArrayContext as BatchedEinsumArrayContext)
+
+
+def is_dataclass_array_container(ary) -> bool:
+    return is_array_container_type(ary.__class__) and is_dataclass(ary)
 
 
 class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCaller):
@@ -102,13 +109,15 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         def _as_dict_of_named_arrays(keys, ary):
             name = "_pt_out_" + _ary_container_key_stringifier(keys)
             dict_of_named_arrays[name] = ary
-            return pt.make_placeholder(name, shape=ary.shape, dtype=ary.dtype)
+            return ary
 
-        placeholder_out_template = rec_keyed_map_array_container(
+        rec_keyed_map_array_container(
             _as_dict_of_named_arrays, output_template)
 
         from .pytato_target import generate_arraycontext_code
-        inner_code_prg = generate_arraycontext_code(dict_of_named_arrays,
+        pt_dict_of_named_arrays = pt.transform.deduplicate_data_wrappers(
+            pt.make_dict_of_named_arrays(dict_of_named_arrays))
+        inner_code_prg = generate_arraycontext_code(pt_dict_of_named_arrays,
                                                     function_name="_rhs_inner",
                                                     actx=self.actx,
                                                     show_code=False)
@@ -120,7 +129,8 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         from functools import cache
         from immutables import Map
         from arraycontext import is_array_container_type
-        from arraycontext.container.traversal import rec_keyed_map_array_container
+        from arraycontext.container.traversal import (rec_map_array_container,
+                                                      rec_keyed_map_array_container)
         from dg_benchmarks.utils import get_dg_benchmarks_path
 
 
@@ -140,27 +150,36 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
             return actx.compile(partial(_rhs_inner, actx=actx, npzfile=npzfile))
 
 
-        @cache
-        def _get_output_template():
-            from pickle import load
+        @memoize_on_first_arg
+        def _get_output_template(actx):
             import os
+            import pytato as pt
+            from pickle import load
+            from meshmode.dof_array import array_context_for_pickling
 
             fpath = os.path.join(get_dg_benchmarks_path(),
-                                "{os.path.relpath(self.actx.pickled_output_template_path,
+                                "{os.path.relpath(self.actx.pickled_ref_output_path,
                                                   start=get_dg_benchmarks_path())}")
             with open(fpath, "rb") as fp:
-                output_template = load(fp)
+                with array_context_for_pickling(actx):
+                    output_template = load(fp)
 
-            return output_template
+            def _convert_to_symbolic_array(ary):
+                return pt.zeros(ary.shape, ary.dtype)
+
+            # convert to symbolic array to not free the memory corresponding to
+            # output_template
+            return rec_map_array_container(_convert_to_symbolic_array,
+                                           output_template)
 
 
-        @cache
-        def _get_key_to_pos_in_output_template():
+        @memoize_on_first_arg
+        def _get_key_to_pos_in_output_template(actx):
             from arraycontext.impl.pytato.compile import (
                 _ary_container_key_stringifier)
 
             output_keys = set()
-            output_template = _get_output_template()
+            output_template = _get_output_template(actx)
 
             def _as_dict_of_named_arrays(keys, ary):
                 output_keys.add(keys)
@@ -173,6 +192,12 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
                         for i, output_key in enumerate(sorted(
                                 output_keys, key=_ary_container_key_stringifier))}})
 
+        @cache
+        def _get_rhs_inner_argument_names():
+            return {{
+                '{"', '".join(sorted(inner_code_prg.argument_names))}'
+            }}
+
 
         def rhs(actx, *args, **kwargs):
             from arraycontext.impl.pytato.compile import (
@@ -183,19 +208,24 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
                 "_actx_in_" + _ary_container_key_stringifier(arg_id): arg
                 for arg_id, arg in arg_id_to_arg.items()}}
 
+            input_kwargs_to_rhs_inner = {{
+                kw: input_kwargs_to_rhs_inner[kw]
+                for kw in _get_rhs_inner_argument_names()
+            }}
+
             compiled_rhs_inner = _get_compiled_rhs_inner(actx)
             result_as_np_obj_array = compiled_rhs_inner(**input_kwargs_to_rhs_inner)
 
-            output_template = _get_output_template()
+            output_template = _get_output_template(actx)
 
             if is_array_container_type(output_template.__class__):
-                keys_to_pos = _get_key_to_pos_in_output_template()
+                keys_to_pos = _get_key_to_pos_in_output_template(actx)
 
                 def to_output_template(keys, _):
                     return result_as_np_obj_array[keys_to_pos[keys]]
 
                 return rec_keyed_map_array_container(to_output_template,
-                                                     _get_output_template())
+                                                     _get_output_template(actx))
             else:
                 from pytato.array import Array
                 assert isinstance(output_template, Array)
@@ -230,19 +260,34 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
 
         with open(f"{self.actx.pickled_ref_input_args_path}", "wb") as fp:
             import pickle
-            np_args = tuple(self.actx.to_numpy(arg) for arg in args)
-            np_kwargs = tuple(self.actx.to_numpy(arg) for arg in args)
-            pickle.dump((np_args, np_kwargs), fp)
 
-        with open(f"{self.actx.pickled_output_template_path}", "wb") as fp:
-            import pickle
-            pickle.dump(placeholder_out_template, fp)
+            if (all(is_dataclass_array_container(arg) or np.isscalar(arg)
+                    for arg in args)
+                    and all(is_dataclass_array_container(arg) or np.isscalar(arg)
+                            for arg in kwargs.values())):
+                with array_context_for_pickling(self.actx):
+                    pickle.dump((args, kwargs), fp)
+            elif (any(is_dataclass_array_container(arg) for arg in args)
+                    or any(is_dataclass_array_container(arg)
+                           for arg in kwargs.values())):
+                raise NotImplementedError("Pickling not implemented for input"
+                                          " types.")
+            else:
+                np_args = tuple(self.actx.to_numpy(arg)
+                                for arg in args)
+                np_kwargs = {kw: self.actx.to_numpy(arg)
+                             for kw, arg in kwargs.items()}
+                pickle.dump((np_args, np_kwargs), fp)
 
-        ref_out = self.actx.to_numpy(self.f(*args, **kwargs))
+        ref_out = self.actx.thaw(self.actx.freeze(self.f(*args, **kwargs)))
 
         with open(f"{self.actx.pickled_ref_output_path}", "wb") as fp:
             import pickle
-            pickle.dump(ref_out, fp)
+            if is_dataclass_array_container(ref_out):
+                with array_context_for_pickling(self.actx):
+                    pickle.dump(ref_out, fp)
+            else:
+                pickle.dump(self.actx.to_numpy(ref_out), fp)
 
         # {{{ get 'rhs' callable
 
@@ -256,8 +301,8 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         # }}}
 
         from functools import partial
-        self.program_cache[arg_id_to_descr] = partial(compiled_func,
-                                                      PytatoJAXArrayContext())
+        self_actx_clone = self.actx.clone()
+        self.program_cache[arg_id_to_descr] = partial(compiled_func, self_actx_clone)
 
         # {{{ test that the codegen was successful
 
@@ -265,7 +310,8 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
 
         rec_multimap_array_container(
             np.testing.assert_allclose,
-            PytatoJAXArrayContext().to_numpy(output), ref_out
+            self_actx_clone.to_numpy(output),
+            self.actx.to_numpy(ref_out)
         )
 
         # }}}
@@ -273,8 +319,7 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         return output
 
 
-# TODO: derive from PytatoPyOpenCLArrayContext instead of PytatoJAXArrayContext
-class SuiteGeneratingArraycontext(PytatoJAXArrayContext):
+class SuiteGeneratingArraycontext(BatchedEinsumArrayContext):
     """
     Overrides the :meth:`compile` method of
     :class:`arraycontext.PytatoJAXArrayContext` to generate python code that is
@@ -282,31 +327,32 @@ class SuiteGeneratingArraycontext(PytatoJAXArrayContext):
     generated code.
     """
     def __init__(self,
+                 queue,
+                 allocator,
+                 *,
                  main_file_path: str,
                  datawrappers_path: str,
                  pickled_ref_input_args_path: str,
                  pickled_ref_output_path: str,
-                 pickled_output_template_path: str,
-                 *,
-                 compile_trace_callback: Optional[
-                     Callable[[Any, str, Any], None]] = None
                  ) -> None:
+
+        super().__init__(queue, allocator)
+
         if any(not os.path.isabs(filepath)
                for filepath in [main_file_path, datawrappers_path,
                                 pickled_ref_input_args_path,
-                                pickled_ref_output_path,
-                                pickled_output_template_path]):
+                                pickled_ref_output_path]):
             raise ValueError("Absolute paths are expected.")
 
         self.main_file_path = main_file_path
         self.datawrappers_path = datawrappers_path
         self.pickled_ref_input_args_path = pickled_ref_input_args_path
         self.pickled_ref_output_path = pickled_ref_output_path
-        self.pickled_output_template_path = pickled_output_template_path
-
-        super().__init__()
 
     def compile(self, f: Callable[..., Any]) -> Callable[..., Any]:
         return LazilyArraycontextCompilingFunctionCaller(self, f)
+
+    def clone(self):
+        return BatchedEinsumArrayContext(self.queue, self.allocator)
 
 # vim: fdm=marker
