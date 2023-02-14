@@ -58,5 +58,5 @@ MANIFEST
 \#*\#
 .\#*
 
-*.pkl
-*.npz
+dg_benchmarks/*/*/*.pkl
+dg_benchmarks/*/*/*.npz
