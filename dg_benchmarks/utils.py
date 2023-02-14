@@ -28,7 +28,7 @@ def _get_benchmark_directory(equation: str, dim: int, degree: int) -> str:
     return dir_path
 
 
-def get_benchmark_main_file(equation: str, dim: int, degree: int) -> str:
+def get_benchmarks_main_file_path(equation: str, dim: int, degree: int) -> str:
     import os
     return os.path.join(
         _get_benchmark_directory(equation, dim, degree), "main.py")
