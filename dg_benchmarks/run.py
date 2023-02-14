@@ -68,9 +68,10 @@ def main(equations: Sequence[str],
         for iequation, equation in enumerate(equations):
             for idegree, degree in enumerate(degrees):
                 roofline_flop_rate[idim, iequation, idegree] = (
-                    get_roofline_flop_rate(actx_t, equation, dim, degree)
+                    get_roofline_flop_rate(equation, dim, degree)
                 )
     filename = (datetime
+                .datetime
                 .now(pytz.timezone("America/Chicago"))
                 .strftime("archive/case_%Y_%m_%d_%H%M.npz"))
 
@@ -86,9 +87,9 @@ def main(equations: Sequence[str],
                       *[_NAME_TO_ACTX_CLASS.inv[actx_t]
                         for actx_t in actx_ts],
                       "Roofline"]]
-            for idim, dim in enumerate(dims):
+            for idegree, degree in enumerate(degrees):
                 table.append(
-                    [f"P{dim}",
+                    [f"P{degree}",
                      *[stringify_flops(flop_rate[iactx_t, idim, iequation, idegree])
                        for iactx_t, _ in enumerate(actx_ts)],
                      stringify_flops(roofline_flop_rate[idim, iequation, idegree])

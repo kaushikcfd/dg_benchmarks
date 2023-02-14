@@ -50,24 +50,38 @@ class _BatchedEinsumKernelGettingActx(BatchedEinsumPytatoPyOpenCLArrayContext):
 def _get_batched_einsum_kernel(equation: str,
                                dim: int,
                                degree: int) -> lp.TranslationUnit:
+    from meshmode.dof_array import array_context_for_pickling
     from dg_benchmarks.utils import (get_benchmark_rhs,
-                                     get_benchmark_ref_input_arguments_path)
+                                     get_benchmark_ref_input_arguments_path,
+                                     is_dataclass_array_container)
     rhs_clbl = get_benchmark_rhs(equation, dim, degree)
     cl_ctx = cl.create_some_context()
-    cq = cl.CommandQueeu(cl_ctx)
+    cq = cl.CommandQueue(cl_ctx)
 
-    actx = _MinimalBytesKernelException(cq)
+    actx = _BatchedEinsumKernelGettingActx(cq)
 
     with open(get_benchmark_ref_input_arguments_path(equation, dim, degree),
               "rb") as fp:
         import pickle
-        np_args, np_kwargs = pickle.load(fp)
+        with array_context_for_pickling(actx):
+            np_args, np_kwargs = pickle.load(fp)
 
-    args, kwargs = (tuple(actx.from_numpy(arg) for arg in np_args),
-                    {kw: actx.from_numpy(arg) for kw, arg in np_kwargs.items()})
+    if (all(is_dataclass_array_container(arg) or np.isscalar(arg)
+            for arg in np_args)
+            and all(is_dataclass_array_container(arg) or np.isscalar(arg)
+                    for arg in np_kwargs.values())):
+        args, kwargs = np_args, np_kwargs
+    elif (any(is_dataclass_array_container(arg) for arg in args)
+            or any(is_dataclass_array_container(arg)
+                   for arg in kwargs.values())):
+        raise NotImplementedError("Pickling not implemented for input"
+                                  " types.")
+    else:
+        args, kwargs = (tuple(actx.from_numpy(arg) for arg in np_args),
+                        {kw: actx.from_numpy(arg) for kw, arg in np_kwargs.items()})
 
     try:
-        rhs_clbl(0.0, *args, **kwargs)
+        rhs_clbl(actx, *args, **kwargs)
     except _MinimalBytesKernelException as e:
         t_unit, = e.args
         assert isinstance(t_unit, lp.TranslationUnit)
@@ -79,6 +93,13 @@ def _get_batched_einsum_kernel(equation: str,
 @cache
 def get_float64_flops(equation: str, dim: int, degree: int) -> int:
     t_unit = _get_batched_einsum_kernel(equation, dim, degree)
+    t_unit = t_unit.with_kernel(
+        t_unit.default_entrypoint.copy(
+            silenced_warnings=["insn_count_subgroups_upper_bound",
+                               "summing_if_branches_ops",
+                               ],
+        )
+    )
     op_map = lp.get_op_map(t_unit, subgroup_size=1)
     knl = t_unit.default_entrypoint
 
@@ -145,8 +166,7 @@ def get_roofline_flop_rate(equation: str, dim: int, degree: int,
     if roofline_model == "batched_einsum:global_ai":
         import pyopencl as cl
         cl_ctx = cl.create_some_context()
-        cq = cl.CommandQueue(cl_ctx)
-        device_name, = {dev.name for dev in cq.devices}
+        device_name, = {dev.name for dev in cl_ctx.devices}
 
         try:
             t_runtime = max(
