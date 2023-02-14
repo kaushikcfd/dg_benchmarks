@@ -112,6 +112,8 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         from .pytato_target import generate_arraycontext_code
         pt_dict_of_named_arrays = pt.transform.deduplicate_data_wrappers(
             pt.make_dict_of_named_arrays(dict_of_named_arrays))
+        pt_dict_of_named_arrays = pt.rewrite_einsums_with_no_broadcasts(
+            pt_dict_of_named_arrays)
         inner_code_prg = generate_arraycontext_code(pt_dict_of_named_arrays,
                                                     function_name="_rhs_inner",
                                                     actx=self.actx,
