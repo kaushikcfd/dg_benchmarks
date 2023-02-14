@@ -12,24 +12,19 @@ import numpy as np
 import re
 import sys
 
-from dataclasses import is_dataclass
 from arraycontext import is_array_container_type
 from arraycontext.container.traversal import (rec_keyed_map_array_container,
                                               rec_multimap_array_container)
 from typing import Callable, Any, Type, Dict
 from arraycontext.impl.pytato.compile import (BaseLazilyCompilingFunctionCaller,
                                               CompiledFunction)
-from dg_benchmarks.utils import get_dg_benchmarks_path
+from dg_benchmarks.utils import get_dg_benchmarks_path, is_dataclass_array_container
 from meshmode.dof_array import array_context_for_pickling
 import autoflake
 import black
 from pathlib import Path
 from meshmode.array_context import (
     BatchedEinsumPytatoPyOpenCLArrayContext as BatchedEinsumArrayContext)
-
-
-def is_dataclass_array_container(ary) -> bool:
-    return is_array_container_type(ary.__class__) and is_dataclass(ary)
 
 
 class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCaller):

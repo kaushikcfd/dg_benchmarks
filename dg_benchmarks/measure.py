@@ -17,6 +17,7 @@ from dg_benchmarks.utils import (get_benchmark_rhs,
 
 from dg_benchmarks.perf_analysis import get_float64_flops
 from time import time
+from meshmode.dof_array import array_context_for_pickling
 
 
 def _instantiate_actx_t(actx_t: Type[ArrayContext]) -> ArrayContext:
@@ -50,19 +51,39 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
     instance of *actx_t* and returns the FLOP-through as "Total number of
     Floating Point Operations per second".
     """
+    import pickle
+    from dg_benchmarks.utils import is_dataclass_array_container
+
     rhs_clbl = get_benchmark_rhs(equation, dim, degree)
     actx = _instantiate_actx_t(actx_t)
 
     with open(get_benchmark_ref_input_arguments_path(equation, dim, degree),
               "rb") as fp:
-        import pickle
-        np_args, np_kwargs = pickle.load(fp)
+        with array_context_for_pickling(actx):
+            np_args, np_kwargs = pickle.load(fp)
 
     with open(get_benchmark_ref_output_path(equation, dim, degree), "rb") as fp:
-        ref_output = pickle.load()
+        with array_context_for_pickling(actx):
+            np_ref_output = pickle.load(fp)
 
-    args, kwargs = (tuple(actx.from_numpy(arg) for arg in np_args),
-                    {kw: actx.from_numpy(arg) for kw, arg in np_kwargs.items()})
+    if (all(is_dataclass_array_container(arg) or np.isscalar(arg)
+            for arg in np_args)
+            and all(is_dataclass_array_container(arg) or np.isscalar(arg)
+                    for arg in np_kwargs.values())):
+        args, kwargs = np_args, np_kwargs
+    elif (any(is_dataclass_array_container(arg) for arg in args)
+            or any(is_dataclass_array_container(arg)
+                   for arg in kwargs.values())):
+        raise NotImplementedError("Pickling not implemented for input"
+                                  " types.")
+    else:
+        args, kwargs = (tuple(actx.from_numpy(arg) for arg in np_args),
+                        {kw: actx.from_numpy(arg) for kw, arg in np_kwargs.items()})
+
+    if is_dataclass_array_container(np_ref_output):
+        ref_output = np_ref_output
+    else:
+        ref_output = actx.from_numpy(np_ref_output)
 
     # {{{ verify correctness for actx_t
 

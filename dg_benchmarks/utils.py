@@ -1,4 +1,6 @@
+from arraycontext import is_array_container_type
 from typing import Any, Callable
+from dataclasses import is_dataclass
 
 
 def get_dg_benchmarks_path() -> str:
@@ -77,3 +79,7 @@ def get_benchmark_rhs(equation: str, dim: int, degree: int
 
     assert callable(rhs_clbl)
     return rhs_clbl
+
+
+def is_dataclass_array_container(ary) -> bool:
+    return is_array_container_type(ary.__class__) and is_dataclass(ary)
