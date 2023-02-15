@@ -9,10 +9,11 @@ from meshmode.transform_metadata import DiscretizationFaceAxisTag
 from meshmode.transform_metadata import DiscretizationTopologicalDimAxisTag
 from meshmode.transform_metadata import FirstAxisIsElementsTag
 from pytato.tags import PrefixNamed
-from pytools import memoize_on_first_arg, keyed_memoize_on_first_arg
-from functools import cache
+from pytools import memoize_method
+from functools import cached_property
 from immutables import Map
-from arraycontext import is_array_container_type
+from arraycontext import ArrayContext, is_array_container_type
+from dataclasses import dataclass
 from arraycontext.container.traversal import (
     rec_map_array_container,
     rec_keyed_map_array_container,
@@ -142,16 +143,16 @@ def _rhs_inner(
             lp.GlobalArg("_in1", dtype=np.float64, shape=(2970000, 1)),
         ],
     )
-    _pt_data = actx.thaw(_from_numpy(actx, npzfile, "_pt_data"))
+    _pt_data = actx.thaw(npzfile["_pt_data"])
     _pt_data = actx.tag((PrefixNamed(prefix="area_el_vol"),), _pt_data)
     _pt_data = actx.tag_axis(0, (DiscretizationElementAxisTag(),), _pt_data)
     _pt_data = actx.tag_axis(1, (DiscretizationDOFAxisTag(),), _pt_data)
     _pt_tmp_2 = 1.0 / _pt_data
     _pt_tmp_1 = _pt_tmp_2[:, 0]
-    _pt_data_0 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_0"))
+    _pt_data_0 = actx.thaw(npzfile["_pt_data_0"])
     del _pt_tmp_2
     _pt_data_0 = actx.tag_axis(0, (DiscretizationDOFAxisTag(),), _pt_data_0)
-    _pt_data_1 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_1"))
+    _pt_data_1 = actx.thaw(npzfile["_pt_data_1"])
     _pt_data_1 = actx.tag(
         (PrefixNamed(prefix="inv_metric_deriv_vol"),), _pt_data_1
     )
@@ -164,7 +165,7 @@ def _rhs_inner(
     _pt_data_1 = actx.tag_axis(2, (DiscretizationElementAxisTag(),), _pt_data_1)
     _pt_data_1 = actx.tag_axis(3, (DiscretizationDOFAxisTag(),), _pt_data_1)
     _pt_tmp_6 = _pt_data_1[:, :, :, 0]
-    _pt_data_2 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_2"))
+    _pt_data_2 = actx.thaw(npzfile["_pt_data_2"])
     _pt_data_2 = actx.tag_axis(1, (DiscretizationDOFAxisTag(),), _pt_data_2)
     _actx_in_1_v_0_0 = actx.tag_axis(
         0, (DiscretizationElementAxisTag(),), _actx_in_1_v_0_0
@@ -193,11 +194,11 @@ def _rhs_inner(
     _pt_tmp_5 = actx.tag((FirstAxisIsElementsTag(),), _pt_tmp_5)
     del _pt_tmp_7
     _pt_tmp_4 = -1 * _pt_tmp_5
-    _pt_data_3 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_3"))
+    _pt_data_3 = actx.thaw(npzfile["_pt_data_3"])
     del _pt_tmp_5
     _pt_data_3 = actx.tag_axis(0, (DiscretizationDOFAxisTag(),), _pt_data_3)
     _pt_data_3 = actx.tag_axis(2, (DiscretizationDOFAxisTag(),), _pt_data_3)
-    _pt_data_4 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_4"))
+    _pt_data_4 = actx.thaw(npzfile["_pt_data_4"])
     _pt_data_4 = actx.tag(
         (PrefixNamed(prefix="area_el_b_face_restr_all"),), _pt_data_4
     )
@@ -206,23 +207,23 @@ def _rhs_inner(
     _pt_tmp_10 = actx.np.reshape(_pt_data_4, (4, 750000, 1))
     _pt_tmp_10 = actx.tag_axis(1, (DiscretizationElementAxisTag(),), _pt_tmp_10)
     _pt_tmp_9 = _pt_tmp_10[:, :, 0]
-    _pt_data_5 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_5"))
+    _pt_data_5 = actx.thaw(npzfile["_pt_data_5"])
     del _pt_tmp_10
     _pt_data_5 = actx.tag((PrefixNamed(prefix="from_el_present"),), _pt_data_5)
     _pt_tmp_15 = actx.np.reshape(_pt_data_5, (3000000, 1))
     _pt_tmp_15 = actx.tag((PrefixNamed(prefix="from_el_present"),), _pt_tmp_15)
-    _pt_data_6 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_6"))
+    _pt_data_6 = actx.thaw(npzfile["_pt_data_6"])
     _pt_data_6 = actx.tag((PrefixNamed(prefix="from_el_indices"),), _pt_data_6)
     _pt_tmp_26 = actx.np.reshape(_pt_data_6, (30000, 1))
     _pt_tmp_26 = actx.tag((PrefixNamed(prefix="from_el_indices"),), _pt_tmp_26)
-    _pt_data_7 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_7"))
+    _pt_data_7 = actx.thaw(npzfile["_pt_data_7"])
     _pt_data_7 = actx.tag((PrefixNamed(prefix="dof_pick_lists"),), _pt_data_7)
-    _pt_data_8 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_8"))
+    _pt_data_8 = actx.thaw(npzfile["_pt_data_8"])
     _pt_data_8 = actx.tag(
         (PrefixNamed(prefix="dof_pick_list_indices"),), _pt_data_8
     )
     _pt_tmp_27 = (
-        _pt_data_7[_pt_data_8,]
+        _pt_data_7[_pt_data_8]
         if actx.permits_advanced_indexing
         else actx.call_loopy(_pt_t_unit, in_0=_pt_data_7, in_1=_pt_data_8)[
             "out"
@@ -244,7 +245,7 @@ def _rhs_inner(
     _pt_tmp_23 = _pt_tmp_24 + _pt_tmp_24
     del _pt_tmp_25
     _pt_tmp_22 = 0.5 * _pt_tmp_23
-    _pt_data_9 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_9"))
+    _pt_data_9 = actx.thaw(npzfile["_pt_data_9"])
     del _pt_tmp_23
     _pt_data_9 = actx.tag((PrefixNamed(prefix="normal_1_b_all"),), _pt_data_9)
     _pt_data_9 = actx.tag_axis(0, (DiscretizationElementAxisTag(),), _pt_data_9)
@@ -273,7 +274,7 @@ def _rhs_inner(
     _pt_tmp_30 = _pt_tmp_31 + _pt_tmp_31
     del _pt_tmp_32
     _pt_tmp_29 = 0.5 * _pt_tmp_30
-    _pt_data_10 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_10"))
+    _pt_data_10 = actx.thaw(npzfile["_pt_data_10"])
     del _pt_tmp_30
     _pt_data_10 = actx.tag((PrefixNamed(prefix="normal_2_b_all"),), _pt_data_10)
     _pt_data_10 = actx.tag_axis(
@@ -306,7 +307,7 @@ def _rhs_inner(
     _pt_tmp_35 = _pt_tmp_36 + _pt_tmp_36
     del _pt_tmp_37
     _pt_tmp_34 = 0.5 * _pt_tmp_35
-    _pt_data_11 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_11"))
+    _pt_data_11 = actx.thaw(npzfile["_pt_data_11"])
     del _pt_tmp_35
     _pt_data_11 = actx.tag((PrefixNamed(prefix="normal_4_b_all"),), _pt_data_11)
     _pt_data_11 = actx.tag_axis(
@@ -348,18 +349,18 @@ def _rhs_inner(
     del _pt_tmp_39
     _pt_tmp_17 = 1 * _pt_tmp_18
     del _pt_tmp_19, _pt_tmp_38
-    _pt_data_12 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_12"))
+    _pt_data_12 = actx.thaw(npzfile["_pt_data_12"])
     del _pt_tmp_18
     _pt_data_12 = actx.tag(
         (PrefixNamed(prefix="from_el_indices"),), _pt_data_12
     )
     _pt_tmp_43 = actx.np.reshape(_pt_data_12, (3000000, 1))
     _pt_tmp_43 = actx.tag((PrefixNamed(prefix="from_el_indices"),), _pt_tmp_43)
-    _pt_data_13 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_13"))
+    _pt_data_13 = actx.thaw(npzfile["_pt_data_13"])
     _pt_data_13 = actx.tag((PrefixNamed(prefix="dof_pick_lists"),), _pt_data_13)
     _pt_tmp_45 = actx.zeros((3000000,), dtype=np.int32)
     _pt_tmp_44 = (
-        _pt_data_13[_pt_tmp_45,]
+        _pt_data_13[_pt_tmp_45]
         if actx.permits_advanced_indexing
         else actx.call_loopy(_pt_t_unit_2, in_0=_pt_data_13, in_1=_pt_tmp_45)[
             "out"
@@ -384,27 +385,27 @@ def _rhs_inner(
     del _pt_tmp_16
     _pt_tmp_14 = actx.tag_axis(1, (DiscretizationDOFAxisTag(),), _pt_tmp_14)
     _pt_tmp_13 = 0 + _pt_tmp_14
-    _pt_data_14 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_14"))
+    _pt_data_14 = actx.thaw(npzfile["_pt_data_14"])
     del _pt_tmp_14
     _pt_data_14 = actx.tag(
         (PrefixNamed(prefix="from_el_present"),), _pt_data_14
     )
     _pt_tmp_49 = actx.np.reshape(_pt_data_14, (3000000, 1))
     _pt_tmp_49 = actx.tag((PrefixNamed(prefix="from_el_present"),), _pt_tmp_49)
-    _pt_data_15 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_15"))
+    _pt_data_15 = actx.thaw(npzfile["_pt_data_15"])
     _pt_data_15 = actx.tag(
         (PrefixNamed(prefix="from_el_indices"),), _pt_data_15
     )
     _pt_tmp_60 = actx.np.reshape(_pt_data_15, (2970000, 1))
     _pt_tmp_60 = actx.tag((PrefixNamed(prefix="from_el_indices"),), _pt_tmp_60)
-    _pt_data_16 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_16"))
+    _pt_data_16 = actx.thaw(npzfile["_pt_data_16"])
     _pt_data_16 = actx.tag((PrefixNamed(prefix="dof_pick_lists"),), _pt_data_16)
-    _pt_data_17 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_17"))
+    _pt_data_17 = actx.thaw(npzfile["_pt_data_17"])
     _pt_data_17 = actx.tag(
         (PrefixNamed(prefix="dof_pick_list_indices"),), _pt_data_17
     )
     _pt_tmp_61 = (
-        _pt_data_16[_pt_data_17,]
+        _pt_data_16[_pt_data_17]
         if actx.permits_advanced_indexing
         else actx.call_loopy(_pt_t_unit_5, in_0=_pt_data_16, in_1=_pt_data_17)[
             "out"
@@ -423,21 +424,21 @@ def _rhs_inner(
     _pt_tmp_59 = actx.tag_axis(0, (DiscretizationElementAxisTag(),), _pt_tmp_59)
     _pt_tmp_59 = actx.tag_axis(1, (DiscretizationDOFAxisTag(),), _pt_tmp_59)
     _pt_tmp_58 = 0 + _pt_tmp_59
-    _pt_data_18 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_18"))
+    _pt_data_18 = actx.thaw(npzfile["_pt_data_18"])
     del _pt_tmp_59
     _pt_data_18 = actx.tag(
         (PrefixNamed(prefix="from_el_indices"),), _pt_data_18
     )
     _pt_tmp_64 = actx.np.reshape(_pt_data_18, (2970000, 1))
     _pt_tmp_64 = actx.tag((PrefixNamed(prefix="from_el_indices"),), _pt_tmp_64)
-    _pt_data_19 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_19"))
+    _pt_data_19 = actx.thaw(npzfile["_pt_data_19"])
     _pt_data_19 = actx.tag((PrefixNamed(prefix="dof_pick_lists"),), _pt_data_19)
-    _pt_data_20 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_20"))
+    _pt_data_20 = actx.thaw(npzfile["_pt_data_20"])
     _pt_data_20 = actx.tag(
         (PrefixNamed(prefix="dof_pick_list_indices"),), _pt_data_20
     )
     _pt_tmp_65 = (
-        _pt_data_19[_pt_data_20,]
+        _pt_data_19[_pt_data_20]
         if actx.permits_advanced_indexing
         else actx.call_loopy(_pt_t_unit_7, in_0=_pt_data_19, in_1=_pt_data_20)[
             "out"
@@ -456,7 +457,7 @@ def _rhs_inner(
     _pt_tmp_57 = _pt_tmp_58 + _pt_tmp_62
     del _pt_tmp_63
     _pt_tmp_56 = 0.5 * _pt_tmp_57
-    _pt_data_21 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_21"))
+    _pt_data_21 = actx.thaw(npzfile["_pt_data_21"])
     del _pt_tmp_57
     _pt_data_21 = actx.tag(
         (PrefixNamed(prefix="normal_1_b_face_restr_interior"),), _pt_data_21
@@ -500,7 +501,7 @@ def _rhs_inner(
     _pt_tmp_68 = _pt_tmp_69 + _pt_tmp_71
     del _pt_tmp_72
     _pt_tmp_67 = 0.5 * _pt_tmp_68
-    _pt_data_22 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_22"))
+    _pt_data_22 = actx.thaw(npzfile["_pt_data_22"])
     del _pt_tmp_68
     _pt_data_22 = actx.tag(
         (PrefixNamed(prefix="normal_2_b_face_restr_interior"),), _pt_data_22
@@ -546,7 +547,7 @@ def _rhs_inner(
     _pt_tmp_75 = _pt_tmp_76 + _pt_tmp_78
     del _pt_tmp_79
     _pt_tmp_74 = 0.5 * _pt_tmp_75
-    _pt_data_23 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_23"))
+    _pt_data_23 = actx.thaw(npzfile["_pt_data_23"])
     del _pt_tmp_75
     _pt_data_23 = actx.tag(
         (PrefixNamed(prefix="normal_4_b_face_restr_interior"),), _pt_data_23
@@ -595,17 +596,17 @@ def _rhs_inner(
     del _pt_tmp_81
     _pt_tmp_51 = 1 * _pt_tmp_52
     del _pt_tmp_53, _pt_tmp_80
-    _pt_data_24 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_24"))
+    _pt_data_24 = actx.thaw(npzfile["_pt_data_24"])
     del _pt_tmp_52
     _pt_data_24 = actx.tag(
         (PrefixNamed(prefix="from_el_indices"),), _pt_data_24
     )
     _pt_tmp_86 = actx.np.reshape(_pt_data_24, (3000000, 1))
     _pt_tmp_86 = actx.tag((PrefixNamed(prefix="from_el_indices"),), _pt_tmp_86)
-    _pt_data_25 = actx.thaw(_from_numpy(actx, npzfile, "_pt_data_25"))
+    _pt_data_25 = actx.thaw(npzfile["_pt_data_25"])
     _pt_data_25 = actx.tag((PrefixNamed(prefix="dof_pick_lists"),), _pt_data_25)
     _pt_tmp_87 = (
-        _pt_data_25[_pt_tmp_45,]
+        _pt_data_25[_pt_tmp_45]
         if actx.permits_advanced_indexing
         else actx.call_loopy(_pt_t_unit_2, in_0=_pt_data_25, in_1=_pt_tmp_45)[
             "out"
@@ -654,7 +655,7 @@ def _rhs_inner(
     )
     _pt_tmp_92 = actx.tag((FirstAxisIsElementsTag(),), _pt_tmp_92)
     del _pt_tmp_6
-    _pt_tmp_91 = _pt_tmp_92[0,]
+    _pt_tmp_91 = _pt_tmp_92[0]
     _pt_tmp_90 = -1 * _pt_tmp_91
     _pt_tmp_103 = _pt_tmp_41 + _pt_tmp_40
     del _pt_tmp_91
@@ -834,7 +835,7 @@ def _rhs_inner(
     del _pt_tmp_90, _pt_tmp_93
     _pt_tmp_88 = actx.tag((FirstAxisIsElementsTag(),), _pt_tmp_88)
     del _pt_tmp_89
-    _pt_tmp_136 = _pt_tmp_92[1,]
+    _pt_tmp_136 = _pt_tmp_92[1]
     _pt_tmp_135 = -1 * _pt_tmp_136
     _pt_tmp_145 = (
         _pt_tmp_102 * _pt_data_10
@@ -936,7 +937,7 @@ def _rhs_inner(
     del _pt_tmp_135, _pt_tmp_137
     _pt_tmp_133 = actx.tag((FirstAxisIsElementsTag(),), _pt_tmp_133)
     del _pt_tmp_134
-    _pt_tmp_158 = _pt_tmp_92[2,]
+    _pt_tmp_158 = _pt_tmp_92[2]
     _pt_tmp_157 = -1 * _pt_tmp_158
     del _pt_tmp_92
     _pt_tmp_167 = (
@@ -1048,111 +1049,125 @@ def _rhs_inner(
     del _pt_tmp_0, _pt_tmp_133, _pt_tmp_155, _pt_tmp_88
 
 
-@keyed_memoize_on_first_arg(key=lambda a, b: b)
-def _from_numpy(actx, npzfile, name):
-    return actx.freeze(actx.from_numpy(npzfile[name]))
+@dataclass(frozen=True)
+class RHSInvoker:
+    actx: ArrayContext
 
+    @cached_property
+    def npzfile(self):
+        from immutables import Map
+        import os
 
-@memoize_on_first_arg
-def _get_compiled_rhs_inner(actx):
-    from functools import partial
-    import os
-
-    npzfile = np.load(
-        os.path.join(get_dg_benchmarks_path(), "suite/wave_3D_P1/literals.npz")
-    )
-    return actx.compile(partial(_rhs_inner, actx=actx, npzfile=npzfile))
-
-
-@memoize_on_first_arg
-def _get_output_template(actx):
-    import os
-    import pytato as pt
-    from pickle import load
-    from meshmode.dof_array import array_context_for_pickling
-
-    fpath = os.path.join(
-        get_dg_benchmarks_path(), "suite/wave_3D_P1/ref_outputs.pkl"
-    )
-    with open(fpath, "rb") as fp:
-        with array_context_for_pickling(actx):
-            output_template = load(fp)
-
-    def _convert_to_symbolic_array(ary):
-        return pt.zeros(ary.shape, ary.dtype)
-
-    # convert to symbolic array to not free the memory corresponding to
-    # output_template
-    return rec_map_array_container(_convert_to_symbolic_array, output_template)
-
-
-@memoize_on_first_arg
-def _get_key_to_pos_in_output_template(actx):
-    from arraycontext.impl.pytato.compile import _ary_container_key_stringifier
-
-    output_keys = set()
-    output_template = _get_output_template(actx)
-
-    def _as_dict_of_named_arrays(keys, ary):
-        output_keys.add(keys)
-        return ary
-
-    rec_keyed_map_array_container(_as_dict_of_named_arrays, output_template)
-
-    return Map(
-        {
-            output_key: i
-            for i, output_key in enumerate(
-                sorted(output_keys, key=_ary_container_key_stringifier)
+        kw_to_ary = np.load(
+            os.path.join(
+                get_dg_benchmarks_path(), "suite/wave_3D_P1/literals.npz"
             )
-        }
-    )
-
-
-@cache
-def _get_rhs_inner_argument_names():
-    return {
-        "_actx_in_1_u_0",
-        "_actx_in_1_v_0_0",
-        "_actx_in_1_v_1_0",
-        "_actx_in_1_v_2_0",
-    }
-
-
-def rhs(actx, *args, **kwargs):
-    from arraycontext.impl.pytato.compile import (
-        _get_arg_id_to_arg_and_arg_id_to_descr,
-        _ary_container_key_stringifier,
-    )
-
-    arg_id_to_arg, _ = _get_arg_id_to_arg_and_arg_id_to_descr(args, kwargs)
-    input_kwargs_to_rhs_inner = {
-        "_actx_in_" + _ary_container_key_stringifier(arg_id): arg
-        for arg_id, arg in arg_id_to_arg.items()
-    }
-
-    input_kwargs_to_rhs_inner = {
-        kw: input_kwargs_to_rhs_inner[kw]
-        for kw in _get_rhs_inner_argument_names()
-    }
-
-    compiled_rhs_inner = _get_compiled_rhs_inner(actx)
-    result_as_np_obj_array = compiled_rhs_inner(**input_kwargs_to_rhs_inner)
-
-    output_template = _get_output_template(actx)
-
-    if is_array_container_type(output_template.__class__):
-        keys_to_pos = _get_key_to_pos_in_output_template(actx)
-
-        def to_output_template(keys, _):
-            return result_as_np_obj_array[keys_to_pos[keys]]
-
-        return rec_keyed_map_array_container(
-            to_output_template, _get_output_template(actx)
         )
-    else:
-        from pytato.array import Array
+        return Map(
+            {
+                kw: self.actx.freeze(self.actx.from_numpy(ary))
+                for kw, ary in kw_to_ary.items()
+            }
+        )
 
-        assert isinstance(output_template, Array)
-        assert result_as_np_obj_array.shape == (1,)
-        return result_as_np_obj_array[0]
+    @memoize_method
+    def _get_compiled_rhs_inner(self):
+        return self.actx.compile(
+            lambda *args, **kwargs: _rhs_inner(
+                self.actx, self.npzfile, *args, **kwargs
+            )
+        )
+
+    @memoize_method
+    def _get_output_template(self):
+        import os
+        import pytato as pt
+        from pickle import load
+        from meshmode.dof_array import array_context_for_pickling
+
+        fpath = os.path.join(
+            get_dg_benchmarks_path(), "suite/wave_3D_P1/ref_outputs.pkl"
+        )
+        with open(fpath, "rb") as fp:
+            with array_context_for_pickling(self.actx):
+                output_template = load(fp)
+
+        def _convert_to_symbolic_array(ary):
+            return pt.zeros(ary.shape, ary.dtype)
+
+        # convert to symbolic array to not free the memory corresponding to
+        # output_template
+        return rec_map_array_container(
+            _convert_to_symbolic_array, output_template
+        )
+
+    @memoize_method
+    def _get_key_to_pos_in_output_template(self):
+        from arraycontext.impl.pytato.compile import (
+            _ary_container_key_stringifier,
+        )
+
+        output_keys = set()
+        output_template = self._get_output_template()
+
+        def _as_dict_of_named_arrays(keys, ary):
+            output_keys.add(keys)
+            return ary
+
+        rec_keyed_map_array_container(_as_dict_of_named_arrays, output_template)
+
+        return Map(
+            {
+                output_key: i
+                for i, output_key in enumerate(
+                    sorted(output_keys, key=_ary_container_key_stringifier)
+                )
+            }
+        )
+
+    @cached_property
+    def _rhs_inner_argument_names(self):
+        return {
+            "_actx_in_1_u_0",
+            "_actx_in_1_v_0_0",
+            "_actx_in_1_v_1_0",
+            "_actx_in_1_v_2_0",
+        }
+
+    def __call__(self, *args, **kwargs):
+        from arraycontext.impl.pytato.compile import (
+            _get_arg_id_to_arg_and_arg_id_to_descr,
+            _ary_container_key_stringifier,
+        )
+
+        arg_id_to_arg, _ = _get_arg_id_to_arg_and_arg_id_to_descr(args, kwargs)
+        input_kwargs_to_rhs_inner = {
+            "_actx_in_" + _ary_container_key_stringifier(arg_id): arg
+            for arg_id, arg in arg_id_to_arg.items()
+        }
+
+        input_kwargs_to_rhs_inner = {
+            kw: input_kwargs_to_rhs_inner[kw]
+            for kw in self._rhs_inner_argument_names
+        }
+
+        compiled_rhs_inner = self._get_compiled_rhs_inner()
+        result_as_np_obj_array = compiled_rhs_inner(**input_kwargs_to_rhs_inner)
+
+        output_template = self._get_output_template()
+
+        if is_array_container_type(output_template.__class__):
+            keys_to_pos = self._get_key_to_pos_in_output_template()
+
+            def to_output_template(keys, _):
+                return result_as_np_obj_array[keys_to_pos[keys]]
+
+            return rec_keyed_map_array_container(
+                to_output_template, self._get_output_template()
+            )
+        else:
+            from pytato.array import Array
+
+            assert isinstance(output_template, Array)
+            assert result_as_np_obj_array.shape == (1,)
+            return result_as_np_obj_array[0]
