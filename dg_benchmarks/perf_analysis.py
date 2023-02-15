@@ -51,14 +51,15 @@ def _get_batched_einsum_kernel(equation: str,
                                dim: int,
                                degree: int) -> lp.TranslationUnit:
     from meshmode.dof_array import array_context_for_pickling
-    from dg_benchmarks.utils import (get_benchmark_rhs,
+    from dg_benchmarks.utils import (get_benchmark_rhs_invoker,
                                      get_benchmark_ref_input_arguments_path,
                                      is_dataclass_array_container)
-    rhs_clbl = get_benchmark_rhs(equation, dim, degree)
+    rhs_invoker = get_benchmark_rhs_invoker(equation, dim, degree)
     cl_ctx = cl.create_some_context()
     cq = cl.CommandQueue(cl_ctx)
 
     actx = _BatchedEinsumKernelGettingActx(cq)
+    rhs_clbl = rhs_invoker(actx)
 
     with open(get_benchmark_ref_input_arguments_path(equation, dim, degree),
               "rb") as fp:
@@ -81,7 +82,7 @@ def _get_batched_einsum_kernel(equation: str,
                         {kw: actx.from_numpy(arg) for kw, arg in np_kwargs.items()})
 
     try:
-        rhs_clbl(actx, *args, **kwargs)
+        rhs_clbl(*args, **kwargs)
     except _MinimalBytesKernelException as e:
         t_unit, = e.args
         assert isinstance(t_unit, lp.TranslationUnit)
@@ -169,6 +170,7 @@ def get_roofline_flop_rate(equation: str, dim: int, degree: int,
         device_name, = {dev.name for dev in cl_ctx.devices}
 
         try:
+
             t_runtime = max(
                 ((get_float64_flops(equation, dim, degree)*1e-9)
                  / DEV_TO_PEAK_F64_GFLOPS[device_name]),

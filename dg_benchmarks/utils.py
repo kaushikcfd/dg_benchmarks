@@ -1,5 +1,4 @@
 from arraycontext import is_array_container_type
-from typing import Any, Callable
 from dataclasses import is_dataclass
 
 
@@ -59,8 +58,8 @@ def get_benchmark_ref_output_path(
         _get_benchmark_directory(equation, dim, degree), "ref_outputs.pkl")
 
 
-def get_benchmark_rhs(equation: str, dim: int, degree: int
-                      ) -> Callable[..., Any]:
+def get_benchmark_rhs_invoker(equation: str, dim: int, degree: int
+                              ):
     import importlib.util
     import os
 
@@ -75,10 +74,9 @@ def get_benchmark_rhs(equation: str, dim: int, degree: int
 
     benchmark_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(benchmark_module)
-    rhs_clbl = benchmark_module.rhs
+    rhs_invoker = benchmark_module.RHSInvoker
 
-    assert callable(rhs_clbl)
-    return rhs_clbl
+    return rhs_invoker
 
 
 def is_dataclass_array_container(ary) -> bool:

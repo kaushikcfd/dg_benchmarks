@@ -122,10 +122,11 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         host_code = f"""
         {ast.unparse(ast.fix_missing_locations(
             ast.Module(list(inner_code_prg.import_statements), type_ignores=[])))}
-        from pytools import memoize_on_first_arg, keyed_memoize_on_first_arg
-        from functools import cache
+        from pytools import memoize_method
+        from functools import cached_property
         from immutables import Map
-        from arraycontext import is_array_container_type
+        from arraycontext import ArrayContext, is_array_container_type
+        from dataclasses import dataclass
         from arraycontext.container.traversal import (rec_map_array_container,
                                                       rec_keyed_map_array_container)
         from dg_benchmarks.utils import get_dg_benchmarks_path
@@ -135,105 +136,108 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
             ast.Module([inner_code_prg.function_def], type_ignores=[])))}
 
 
-        @keyed_memoize_on_first_arg(key=lambda a, b: b)
-        def _from_numpy(actx, npzfile, name):
-            return actx.freeze(actx.from_numpy(npzfile[name]))
+        @dataclass(frozen=True)
+        class RHSInvoker:
+            actx: ArrayContext
 
+            @cached_property
+            def npzfile(self):
+                from immutables import Map
+                import os
 
-        @memoize_on_first_arg
-        def _get_compiled_rhs_inner(actx):
-            from functools import partial
-            import os
-            npzfile = np.load(
-                os.path.join(get_dg_benchmarks_path(),
-                             "{os.path.relpath(self.actx.datawrappers_path,
-                                               start=get_dg_benchmarks_path())}")
-            )
-            return actx.compile(partial(_rhs_inner, actx=actx, npzfile=npzfile))
+                kw_to_ary = np.load(
+                    os.path.join(get_dg_benchmarks_path(),
+                                 "{os.path.relpath(self.actx.datawrappers_path,
+                                                   start=get_dg_benchmarks_path())}")
+                )
+                return Map({{kw: self.actx.freeze(self.actx.from_numpy(ary))
+                            for kw, ary in kw_to_ary.items()}})
 
+            @memoize_method
+            def _get_compiled_rhs_inner(self):
+                return self.actx.compile(
+                    lambda *args, **kwargs: _rhs_inner(self.actx, self.npzfile, *args, **kwargs))
 
-        @memoize_on_first_arg
-        def _get_output_template(actx):
-            import os
-            import pytato as pt
-            from pickle import load
-            from meshmode.dof_array import array_context_for_pickling
+            @memoize_method
+            def _get_output_template(self):
+                import os
+                import pytato as pt
+                from pickle import load
+                from meshmode.dof_array import array_context_for_pickling
 
-            fpath = os.path.join(get_dg_benchmarks_path(),
-                                "{os.path.relpath(self.actx.pickled_ref_output_path,
-                                                  start=get_dg_benchmarks_path())}")
-            with open(fpath, "rb") as fp:
-                with array_context_for_pickling(actx):
-                    output_template = load(fp)
+                fpath = os.path.join(get_dg_benchmarks_path(),
+                                    "{os.path.relpath(self.actx.pickled_ref_output_path,
+                                                      start=get_dg_benchmarks_path())}")
+                with open(fpath, "rb") as fp:
+                    with array_context_for_pickling(self.actx):
+                        output_template = load(fp)
 
-            def _convert_to_symbolic_array(ary):
-                return pt.zeros(ary.shape, ary.dtype)
+                def _convert_to_symbolic_array(ary):
+                    return pt.zeros(ary.shape, ary.dtype)
 
-            # convert to symbolic array to not free the memory corresponding to
-            # output_template
-            return rec_map_array_container(_convert_to_symbolic_array,
-                                           output_template)
+                # convert to symbolic array to not free the memory corresponding to
+                # output_template
+                return rec_map_array_container(_convert_to_symbolic_array,
+                                               output_template)
 
+            @memoize_method
+            def _get_key_to_pos_in_output_template(self):
+                from arraycontext.impl.pytato.compile import (
+                    _ary_container_key_stringifier)
 
-        @memoize_on_first_arg
-        def _get_key_to_pos_in_output_template(actx):
-            from arraycontext.impl.pytato.compile import (
-                _ary_container_key_stringifier)
+                output_keys = set()
+                output_template = self._get_output_template()
 
-            output_keys = set()
-            output_template = _get_output_template(actx)
+                def _as_dict_of_named_arrays(keys, ary):
+                    output_keys.add(keys)
+                    return ary
 
-            def _as_dict_of_named_arrays(keys, ary):
-                output_keys.add(keys)
-                return ary
+                rec_keyed_map_array_container(_as_dict_of_named_arrays,
+                                              output_template)
 
-            rec_keyed_map_array_container(_as_dict_of_named_arrays,
-                                          output_template)
+                return Map({{output_key: i
+                            for i, output_key in enumerate(sorted(
+                                    output_keys, key=_ary_container_key_stringifier))}})
 
-            return Map({{output_key: i
-                        for i, output_key in enumerate(sorted(
-                                output_keys, key=_ary_container_key_stringifier))}})
+            @cached_property
+            def _rhs_inner_argument_names(self):
+                return {{
+                    '{"', '".join(sorted(inner_code_prg.argument_names))}'
+                }}
 
-        @cache
-        def _get_rhs_inner_argument_names():
-            return {{
-                '{"', '".join(sorted(inner_code_prg.argument_names))}'
-            }}
+            def __call__(self, *args, **kwargs):
+                from arraycontext.impl.pytato.compile import (
+                    _get_arg_id_to_arg_and_arg_id_to_descr,
+                    _ary_container_key_stringifier)
+                arg_id_to_arg, _ = _get_arg_id_to_arg_and_arg_id_to_descr(args, kwargs)
+                input_kwargs_to_rhs_inner = {{
+                    "_actx_in_" + _ary_container_key_stringifier(arg_id): arg
+                    for arg_id, arg in arg_id_to_arg.items()}}
 
+                input_kwargs_to_rhs_inner = {{
+                    kw: input_kwargs_to_rhs_inner[kw]
+                    for kw in self._rhs_inner_argument_names
+                }}
 
-        def rhs(actx, *args, **kwargs):
-            from arraycontext.impl.pytato.compile import (
-                _get_arg_id_to_arg_and_arg_id_to_descr,
-                _ary_container_key_stringifier)
-            arg_id_to_arg, _ = _get_arg_id_to_arg_and_arg_id_to_descr(args, kwargs)
-            input_kwargs_to_rhs_inner = {{
-                "_actx_in_" + _ary_container_key_stringifier(arg_id): arg
-                for arg_id, arg in arg_id_to_arg.items()}}
+                compiled_rhs_inner = self._get_compiled_rhs_inner()
+                result_as_np_obj_array = compiled_rhs_inner(**input_kwargs_to_rhs_inner)
 
-            input_kwargs_to_rhs_inner = {{
-                kw: input_kwargs_to_rhs_inner[kw]
-                for kw in _get_rhs_inner_argument_names()
-            }}
+                output_template = self._get_output_template()
 
-            compiled_rhs_inner = _get_compiled_rhs_inner(actx)
-            result_as_np_obj_array = compiled_rhs_inner(**input_kwargs_to_rhs_inner)
+                if is_array_container_type(output_template.__class__):
+                    keys_to_pos = self._get_key_to_pos_in_output_template()
 
-            output_template = _get_output_template(actx)
+                    def to_output_template(keys, _):
+                        return result_as_np_obj_array[keys_to_pos[keys]]
 
-            if is_array_container_type(output_template.__class__):
-                keys_to_pos = _get_key_to_pos_in_output_template(actx)
-
-                def to_output_template(keys, _):
-                    return result_as_np_obj_array[keys_to_pos[keys]]
-
-                return rec_keyed_map_array_container(to_output_template,
-                                                     _get_output_template(actx))
-            else:
-                from pytato.array import Array
-                assert isinstance(output_template, Array)
-                assert result_as_np_obj_array.shape == (1,)
-                return result_as_np_obj_array[0]
-        """
+                    return rec_keyed_map_array_container(to_output_template,
+                                                         self._get_output_template())
+                else:
+                    from pytato.array import Array
+                    assert isinstance(output_template, Array)
+                    assert result_as_np_obj_array.shape == (1,)
+                    return result_as_np_obj_array[0]
+        """  # noqa: E501
         host_code = re.sub(r"^        (?P<rest_of_line>.+)$", r"\g<rest_of_line>",
                            host_code, flags=re.MULTILINE)
 
@@ -291,20 +295,20 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
             else:
                 pickle.dump(self.actx.to_numpy(ref_out), fp)
 
+        self_actx_clone = self.actx.clone()
+
         # {{{ get 'rhs' callable
 
         variables_after_execution: Dict[str, Any] = {
             "_MODULE_SOURCE_CODE": host_code,  # helps pudb
         }
         exec(host_code, variables_after_execution)
-        assert callable(variables_after_execution["rhs"])
-        compiled_func = variables_after_execution["rhs"]
+        compiled_func = variables_after_execution["RHSInvoker"](
+            self_actx_clone)
 
         # }}}
 
-        from functools import partial
-        self_actx_clone = self.actx.clone()
-        self.program_cache[arg_id_to_descr] = partial(compiled_func, self_actx_clone)
+        self.program_cache[arg_id_to_descr] = compiled_func
 
         # {{{ test that the codegen was successful
 

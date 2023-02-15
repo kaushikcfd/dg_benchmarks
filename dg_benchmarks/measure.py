@@ -11,7 +11,7 @@ from arraycontext import (ArrayContext, PyOpenCLArrayContext,
                           EagerJAXArrayContext,
                           rec_multimap_array_container)
 from typing import Type
-from dg_benchmarks.utils import (get_benchmark_rhs,
+from dg_benchmarks.utils import (get_benchmark_rhs_invoker,
                                  get_benchmark_ref_input_arguments_path,
                                  get_benchmark_ref_output_path)
 
@@ -21,6 +21,9 @@ from meshmode.dof_array import array_context_for_pickling
 
 
 def _instantiate_actx_t(actx_t: Type[ArrayContext]) -> ArrayContext:
+    import gc
+    gc.collect()
+
     if issubclass(actx_t, (PyOpenCLArrayContext, PytatoPyOpenCLArrayContext)):
         import pyopencl as cl
         import pyopencl.tools as cl_tools
@@ -54,8 +57,9 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
     import pickle
     from dg_benchmarks.utils import is_dataclass_array_container
 
-    rhs_clbl = get_benchmark_rhs(equation, dim, degree)
+    rhs_invoker = get_benchmark_rhs_invoker(equation, dim, degree)
     actx = _instantiate_actx_t(actx_t)
+    rhs_clbl = rhs_invoker(actx)
 
     with open(get_benchmark_ref_input_arguments_path(equation, dim, degree),
               "rb") as fp:
@@ -88,7 +92,7 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
     # {{{ verify correctness for actx_t
 
     if 0:
-        output = rhs_clbl(actx, *args, **kwargs)
+        output = rhs_clbl(*args, **kwargs)
         rec_multimap_array_container(np.testing.assert_allclose,
                                      np_ref_output, actx.to_numpy(output),
                                      )
@@ -102,7 +106,7 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
 
     while i_warmup < 20 and t_warmup < 2:
         t_start = time()
-        rhs_clbl(actx, *args, **kwargs)
+        rhs_clbl(*args, **kwargs)
         t_end = time()
         t_warmup += (t_end - t_start)
         i_warmup += 1
@@ -118,7 +122,7 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
 
         t_start = time()
         for _ in range(40):
-            rhs_clbl(actx, *args, **kwargs)
+            rhs_clbl(*args, **kwargs)
         t_end = time()
 
         t_rhs += (t_end - t_start)

@@ -566,11 +566,15 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
                 assert isinstance(idx, Array)
                 return ast.Name(self.rec(idx))
 
-        rhs = ast.Subscript(value=ast.Name(self.rec(expr.array)),
-                            slice=ast.Tuple(
-                                elts=[
-                                    _rec_idx(idx, dim)
-                                    for idx, dim in zip(
+        if last_non_trivial_index == 0:
+            rhs = ast.Subscript(ast.Name(self.rec(expr.array)),
+                                _rec_idx(expr.indices[0], expr.shape[0]))
+        else:
+            rhs = ast.Subscript(ast.Name(self.rec(expr.array)),
+                                ast.Tuple(
+                                    elts=[
+                                        _rec_idx(idx, dim)
+                                        for idx, dim in zip(
                                             expr.indices[:last_non_trivial_index+1],
                                             expr.array.shape)]))
 
@@ -606,16 +610,12 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
     def map_data_wrapper(self, expr: DataWrapper) -> str:
         lhs = self.vng("_pt_data") if expr.name is None else expr.name
         self.numpy_arrays[lhs] = self.actx.to_numpy(expr)
-        rhs = ast.Call(ast.Attribute(ast.Name(self.actx_arg_name), "thaw"),
-                       args=[ast.Call(
-                           ast.Name("_from_numpy"),
-                           args=[ast.Name(self.actx_arg_name),
-                                 ast.Name(self.npzfile_arg_name),
-                                 ast.Constant(lhs)],
-                           keywords=[],
-                       )],
-                       keywords=[],
-                       )
+        rhs = ast.Call(
+            ast.Attribute(ast.Name(self.actx_arg_name), "thaw"),
+            args=[ast.Subscript(ast.Name(self.npzfile_arg_name),
+                                ast.Constant(lhs))],
+            keywords=[],
+        )
         return self._record_line_and_return_lhs(lhs, rhs)
 
     def map_size_param(self, expr: SizeParam) -> str:
