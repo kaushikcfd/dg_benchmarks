@@ -22,13 +22,13 @@ def get_actx(equation: str, dim: int, degree: int) -> SuiteGeneratingArraycontex
         cq,
         allocator,
         main_file_path=utils.get_benchmark_main_file_path(
-            "wave", dim, degree),
+            equation, dim, degree),
         datawrappers_path=utils.get_benchmark_literals_path(
-            "wave", dim, degree),
+            equation, dim, degree),
         pickled_ref_input_args_path=utils.get_benchmark_ref_input_arguments_path(
-            "wave", dim, degree),
+            equation, dim, degree),
         pickled_ref_output_path=utils.get_benchmark_ref_output_path(
-            "wave", dim, degree),
+            equation, dim, degree),
     )
 
 
@@ -41,6 +41,10 @@ def main(equations: Sequence[str],
             for degree in degrees:
                 if equation == "wave":
                     from dg_benchmarks.suite_generators.wave import main as driver
+                    actx = get_actx(equation, dim, degree)
+                    driver(dim=dim, order=degree, actx=actx)
+                elif equation == "euler":
+                    from dg_benchmarks.suite_generators.euler import main as driver
                     actx = get_actx(equation, dim, degree)
                     driver(dim=dim, order=degree, actx=actx)
                 else:
