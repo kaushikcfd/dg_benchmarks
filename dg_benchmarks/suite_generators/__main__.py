@@ -16,7 +16,7 @@ def get_actx(equation: str, dim: int, degree: int) -> SuiteGeneratingArraycontex
 
     cl_ctx = cl.create_some_context()
     cq = cl.CommandQueue(cl_ctx)
-    allocator = cl_tools.ImmediateAllocator(cq)
+    allocator = cl_tools.MemoryPool(cl_tools.ImmediateAllocator(cq))
 
     return SuiteGeneratingArraycontext(
         cq,
@@ -47,6 +47,14 @@ def main(equations: Sequence[str],
                     from dg_benchmarks.suite_generators.euler import main as driver
                     actx = get_actx(equation, dim, degree)
                     driver(dim=dim, order=degree, actx=actx)
+                elif equation == "cns_without_chem":
+                    from dg_benchmarks.suite_generators.cns import main as driver
+                    actx = get_actx(equation, dim, degree)
+                    driver(dim=dim, order=degree, actx=actx, single_gas_only=True)
+                elif equation == "cns_with_chem":
+                    from dg_benchmarks.suite_generators.cns import main as driver
+                    actx = get_actx(equation, dim, degree)
+                    driver(dim=dim, order=degree, actx=actx, single_gas_only=False)
                 else:
                     raise NotImplementedError(equation, dim, degree)
 
@@ -62,7 +70,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--equations", metavar="E", type=str,
                         help=("comma separated strings representing which"
-                              " equations to time (for ex. 'wave,euler')"),
+                              " equations to time (for ex. 'wave,euler,"
+                              "cns_with_chem,cns_without_chem')"),
                         required=True,
                         )
     parser.add_argument("--dims", metavar="D", type=str,

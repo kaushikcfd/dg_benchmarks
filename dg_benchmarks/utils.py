@@ -80,4 +80,6 @@ def get_benchmark_rhs_invoker(equation: str, dim: int, degree: int
 
 
 def is_dataclass_array_container(ary) -> bool:
-    return is_array_container_type(ary.__class__) and is_dataclass(ary)
+    from meshmode.dof_array import DOFArray
+    return ((is_array_container_type(ary.__class__) and is_dataclass(ary))
+            or isinstance(ary, DOFArray))

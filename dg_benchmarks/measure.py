@@ -70,14 +70,19 @@ def get_flop_rate(actx_t: Type[ArrayContext], equation: str, dim: int,
         with array_context_for_pickling(actx):
             ref_output = pickle.load(fp)
 
-    if (all(is_dataclass_array_container(arg) or np.isscalar(arg)
+    if (all((is_dataclass_array_container(arg)
+             or (isinstance(arg, np.ndarray)
+                 and arg.dtype == "O"
+                 and all(is_dataclass_array_container(el)
+                         for el in arg))
+             or np.isscalar(arg))
             for arg in np_args)
             and all(is_dataclass_array_container(arg) or np.isscalar(arg)
                     for arg in np_kwargs.values())):
         args, kwargs = np_args, np_kwargs
-    elif (any(is_dataclass_array_container(arg) for arg in args)
+    elif (any(is_dataclass_array_container(arg) for arg in np_args)
             or any(is_dataclass_array_container(arg)
-                   for arg in kwargs.values())):
+                   for arg in np_kwargs.values())):
         raise NotImplementedError("Pickling not implemented for input"
                                   " types.")
     else:

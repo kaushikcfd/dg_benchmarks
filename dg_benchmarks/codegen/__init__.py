@@ -12,10 +12,12 @@ import numpy as np
 import re
 import sys
 
+from pytools import memoize_method
 from arraycontext import is_array_container_type
 from arraycontext.container.traversal import (rec_keyed_map_array_container,
-                                              rec_multimap_array_container)
-from typing import Callable, Any, Type, Dict
+                                              rec_multimap_array_container,
+                                              rec_map_array_container)
+from typing import Callable, Any, Type, Dict, FrozenSet
 from arraycontext.impl.pytato.compile import (BaseLazilyCompilingFunctionCaller,
                                               CompiledFunction)
 from dg_benchmarks.utils import get_dg_benchmarks_path, is_dataclass_array_container
@@ -24,7 +26,28 @@ import autoflake
 import black
 from pathlib import Path
 from meshmode.array_context import (
-    BatchedEinsumPytatoPyOpenCLArrayContext as BatchedEinsumArrayContext)
+    # TODO rename FusionContractorArrayContext to
+    # BatchedEinsumPytatoPyOpenCLArrayContext when mirgecom production
+    # is using up to date meshmode.
+    FusionContractorArrayContext as BatchedEinsumArrayContext)
+
+
+def remove_tags_with_typenames(expr: pt.DictOfNamedArrays,
+                               names_to_remove: FrozenSet[str]
+                               ) -> pt.DictOfNamedArrays:
+    def map_fn(subexpr: pt.transform.ArrayOrNames) -> pt.transform.ArrayOrNames:
+        if isinstance(subexpr, pt.Array):
+            new_tags = frozenset([tag
+                                  for tag in subexpr.tags
+                                  if tag.__class__.__name__ not in names_to_remove])
+            return subexpr.copy(tags=new_tags)
+        else:
+            return subexpr
+
+    return pt.transform.map_and_copy(expr, map_fn)
+
+
+BAD_TAG_TYPENAMES = frozenset(["NameHint", "FEMEinsumTag"])
 
 
 class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCaller):
@@ -68,6 +91,27 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
             _ary_container_key_stringifier,
             _get_f_placeholder_args,
         )
+        args, kwargs = (tuple(self.actx.thaw(self.actx.freeze(arg)) for arg in args),
+                        {kw: self.actx.thaw(self.actx.freeze(arg))
+                         for kw, arg in kwargs.items()})
+
+        # {{{ remove bad tags
+
+        def _remove_bad_tags(ary):
+            new_tags = {tag
+                        for tag in ary.tags
+                        if tag.__class__.__name__ not in BAD_TAG_TYPENAMES}
+            return ary.copy(tags=frozenset(new_tags))
+
+        args = tuple(arg if np.isscalar(arg)
+                     else rec_map_array_container(_remove_bad_tags, arg)
+                     for arg in args)
+        kwargs = {kw: (arg if np.isscalar(arg)
+                       else rec_map_array_container(_remove_bad_tags, arg))
+                  for kw, arg in kwargs.items()}
+
+        # }}}
+
         arg_id_to_arg, arg_id_to_descr = _get_arg_id_to_arg_and_arg_id_to_descr(
             args, kwargs)
 
@@ -114,6 +158,8 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
             pt.make_dict_of_named_arrays(dict_of_named_arrays))
         pt_dict_of_named_arrays = pt.rewrite_einsums_with_no_broadcasts(
             pt_dict_of_named_arrays)
+        pt_dict_of_named_arrays = remove_tags_with_typenames(
+            pt_dict_of_named_arrays, BAD_TAG_TYPENAMES)
         inner_code_prg = generate_arraycontext_code(pt_dict_of_named_arrays,
                                                     function_name="_rhs_inner",
                                                     actx=self.actx,
@@ -267,11 +313,21 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
         with open(f"{self.actx.pickled_ref_input_args_path}", "wb") as fp:
             import pickle
 
-            if (all(is_dataclass_array_container(arg) or np.isscalar(arg)
+            if (all((is_dataclass_array_container(arg)
+                        or (isinstance(arg, np.ndarray)
+                            and arg.dtype == "O"
+                            and all(is_dataclass_array_container(el)
+                                    for el in arg))
+                        or np.isscalar(arg))
                     for arg in args)
-                    and all(is_dataclass_array_container(arg) or np.isscalar(arg)
+                    and all((is_dataclass_array_container(arg)
+                                or (isinstance(arg, np.ndarray)
+                                    and arg.dtype == "O"
+                                    and all(is_dataclass_array_container(el)
+                                            for el in arg))
+                                or np.isscalar(arg))
                             for arg in kwargs.values())):
-                with array_context_for_pickling(self.actx):
+                with array_context_for_pickling(self.actx.clone()):
                     pickle.dump((args, kwargs), fp)
             elif (any(is_dataclass_array_container(arg) for arg in args)
                     or any(is_dataclass_array_container(arg)
@@ -286,11 +342,16 @@ class LazilyArraycontextCompilingFunctionCaller(BaseLazilyCompilingFunctionCalle
                 pickle.dump((np_args, np_kwargs), fp)
 
         ref_out = self.actx.thaw(self.actx.freeze(self.f(*args, **kwargs)))
+        ref_out = rec_map_array_container(_remove_bad_tags, ref_out)
 
         with open(f"{self.actx.pickled_ref_output_path}", "wb") as fp:
             import pickle
-            if is_dataclass_array_container(ref_out):
-                with array_context_for_pickling(self.actx):
+            if (is_dataclass_array_container(ref_out)
+                    or (isinstance(ref_out, np.ndarray)
+                        and ref_out.dtype == "O"
+                        and all(is_dataclass_array_container(el)
+                                for el in ref_out))):
+                with array_context_for_pickling(self.actx.clone()):
                     pickle.dump(ref_out, fp)
             else:
                 pickle.dump(self.actx.to_numpy(ref_out), fp)
@@ -356,8 +417,13 @@ class SuiteGeneratingArraycontext(BatchedEinsumArrayContext):
         self.pickled_ref_output_path = pickled_ref_output_path
 
     def compile(self, f: Callable[..., Any]) -> Callable[..., Any]:
-        return LazilyArraycontextCompilingFunctionCaller(self, f)
+        if f.__name__ == "rhs":
+            # We only compile RHS functions
+            return LazilyArraycontextCompilingFunctionCaller(self, f)
+        else:
+            return super().compile(f)
 
+    @memoize_method
     def clone(self):
         return BatchedEinsumArrayContext(self.queue, self.allocator)
 

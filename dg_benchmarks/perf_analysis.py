@@ -1,5 +1,9 @@
 from functools import cache
-from meshmode.array_context import BatchedEinsumPytatoPyOpenCLArrayContext
+from meshmode.array_context import (
+    # TODO rename FusionContractorArrayContext to
+    # BatchedEinsumPytatoPyOpenCLArrayContext when mirgecom production
+    # is using up to date meshmode.
+    FusionContractorArrayContext as BatchedEinsumArrayContext)
 
 import numpy as np
 import loopy as lp
@@ -12,7 +16,7 @@ class _MinimalBytesKernelException(RuntimeError):
     pass
 
 
-class _BatchedEinsumKernelGettingActx(BatchedEinsumPytatoPyOpenCLArrayContext):
+class _BatchedEinsumKernelGettingActx(BatchedEinsumArrayContext):
     """
     An :class:`~arraycontext.ArrayContext` which on obtaining
     :class:`lp.TranslationUnit` in :meth:`transform_loopy_program` which
@@ -67,14 +71,19 @@ def _get_batched_einsum_kernel(equation: str,
         with array_context_for_pickling(actx):
             np_args, np_kwargs = pickle.load(fp)
 
-    if (all(is_dataclass_array_container(arg) or np.isscalar(arg)
+    if (all((is_dataclass_array_container(arg)
+             or (isinstance(arg, np.ndarray)
+                 and arg.dtype == "O"
+                 and all(is_dataclass_array_container(el)
+                         for el in arg))
+             or np.isscalar(arg))
             for arg in np_args)
             and all(is_dataclass_array_container(arg) or np.isscalar(arg)
                     for arg in np_kwargs.values())):
         args, kwargs = np_args, np_kwargs
-    elif (any(is_dataclass_array_container(arg) for arg in args)
+    elif (any(is_dataclass_array_container(arg) for arg in np_args)
             or any(is_dataclass_array_container(arg)
-                   for arg in kwargs.values())):
+                   for arg in np_kwargs.values())):
         raise NotImplementedError("Pickling not implemented for input"
                                   " types.")
     else:

@@ -70,7 +70,6 @@ from pytato.target.python.numpy_like import (first_true,
                                              )
 from arraycontext import ArrayContext
 from immutables import Map
-from arraycontext.metadata import NameHint
 
 
 def get_t_unit_for_index_lambda(expr: IndexLambda) -> lp.TranslationUnit:
@@ -212,15 +211,21 @@ class ArraycontextCodegenMapper(CachedMapper[ArrayOrNames]):
             assert isinstance(lhs, str)
 
             if isinstance(expr, Array):
-                if {tag for tag in expr.tags if not isinstance(tag, NameHint)}:
+                if {
+                        tag for tag in expr.tags
+                        if tag.__class__.__name__ not in ["NameHint", "FEMEinsumTag"]
+                        }:
                     # FIXME: We ignore NameHint tags as we already have pytato tags
                     rhs = ast.Call(
                         ast.Attribute(ast.Name(self.actx_arg_name), "tag"),
-                        args=[ast.Tuple(elts=[self._get_tag_expr(tag)
-                                              for tag in expr.tags
-                                              if not isinstance(tag, NameHint)
-                                              ]),
-                              ast.Name(lhs)],
+                        args=[
+                            ast.Tuple(
+                                elts=[self._get_tag_expr(tag)
+                                      for tag in expr.tags
+                                      if tag.__class__.__name__ not in [
+                                          "NameHint", "FEMEinsumTag"]
+                                      ]),
+                            ast.Name(lhs)],
                         keywords=[],
                     )
                     lhs = self._record_line_and_return_lhs(lhs, rhs)
