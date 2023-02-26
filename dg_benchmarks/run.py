@@ -82,7 +82,7 @@ def main(equations: Sequence[str],
 
     for idim, dim in enumerate(dims):
         for iequation, equation in enumerate(equations):
-            print(f"FLOPS for {dim}D-{equation}:")
+            print(f"GFLOPS/s for {dim}D-{equation}:")
             table = [["",
                       *[_NAME_TO_ACTX_CLASS.inv[actx_t]
                         for actx_t in actx_ts],
