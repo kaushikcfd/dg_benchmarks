@@ -2257,7 +2257,7 @@ def _rhs_inner(
     _pt_tmp_701 = actx.einsum("ij, kj -> ki", _pt_data_18, _actx_in_1_0_mass_0)
     _pt_tmp_701 = actx.tag((FirstAxisIsElementsTag(),), _pt_tmp_701)
     _pt_tmp_700 = _pt_tmp_701**2
-    _pt_data_19 = actx.thaw(npzfile["_pt_data_19"])
+    _pt_data_19 = actx.thaw(npzfile["_pt_data_19"].astype(np.float64))
     del _pt_tmp_701
     _pt_tmp_699 = actx.einsum("ij, j -> i", _pt_tmp_700, _pt_data_19)
     _pt_tmp_703 = _pt_tmp_700 + 2.857142857142857e-14
