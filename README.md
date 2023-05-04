@@ -18,6 +18,18 @@ $ git clone https://github.com/kaushikcfd/dg_benchmarks
 $ cd dg_benchmarks; pip install -e .
 ```
 
+Supporting literal data is made available via pickled files. Run the following
+commands to get the pickle blobs for the current suite.
+
+```console
+$ cd dg_benchmarks
+$ python download_pickled_files.py
+```
+
+**WARNING:** The above command downloads pickled files approx. 800MB in size. To avoid network
+traffic and for better security practices, see `dg_benchmarks/suite_generators.py` to generate
+them.
+
 
 ## HOWTO: Run the timing suite
 ```console
@@ -44,7 +56,6 @@ GFLOPS/s for 3D-euler:
 │    │ pyopencl │ jax:jit │ pytato:batched_einsum │ Roofline │
 ├────┼──────────┼─────────┼───────────────────────┼──────────┤
 │ P1 │ 23.0     │ 44.9    │ 225.8                 │ 770.0    │
-
 ├────┼──────────┼─────────┼───────────────────────┼──────────┤
 │ P2 │ 25.8     │ 81.1    │ 281.6                 │ 971.7    │
 ├────┼──────────┼─────────┼───────────────────────┼──────────┤
